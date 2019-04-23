@@ -3,7 +3,7 @@ use std::io::Read;
 use std::hint::unreachable_unchecked;
 use std::str::FromStr;
 
-const CONFIG_OPTIONS: [&str; 24] = [
+const CONFIG_OPTIONS: [&str; 31] = [
     "fps",
     "board_width",
     "board_height",
@@ -27,7 +27,14 @@ const CONFIG_OPTIONS: [&str; 24] = [
     "soft_drop",
     "hard_drop",
     "hold",
-    "background_color"
+    "background_color",
+    "i_color",
+    "j_color",
+    "l_color",
+    "s_color",
+    "z_color",
+    "t_color",
+    "o_color"
 ];
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -43,6 +50,7 @@ enum SettingValue {
     Color(&'static Color),
     bool(bool),
     Option_usize(Option<usize>),
+    char(char),
     Mode(Mode),
     Key(Key),
     Empty
@@ -50,7 +58,6 @@ enum SettingValue {
 
 enum LoadSettingError {
     ValueError(String),
-    TypeError(String),
     InvalidSetting(String)
 }
 
@@ -75,12 +82,18 @@ impl FromStr for Setting {
         let setting_strs = string.split(|c| c == ' ' || c == '=').collect::<Vec<&str>>();
         let last = setting_strs.len() - 1;
         let option = setting_strs[0].to_lowercase().as_str();
-        let value = setting_strs[setting_strs.len() - 1].to_lowercase().as_str();
+        let value = setting_strs[last].to_lowercase().as_str();
         if let Some(i) = CONFIG_OPTIONS.iter()
             .position(|&config_option| config_option == option) {
             match i {
                 0 => { // fps
-                    if let Ok(num) = setting_strs[last].parse::<u64>() {
+                    if setting_strs[last] == "" {
+                        println!("Found empty setting for FPS. Defaulting to: 60");
+                        Ok(Setting {
+                            field: CONFIG_OPTIONS[0].to_string(),
+                            value: SettingValue::u64(60)
+                        })
+                    } else if let Ok(num) = setting_strs[last].parse::<u64>() {
                         Ok(Setting {
                             field: CONFIG_OPTIONS[0].to_string(),
                             value: SettingValue::u64(num)
@@ -91,7 +104,14 @@ impl FromStr for Setting {
                     }
                 },
                 j @ 1 | 2 | 14 => { // board_width, board_height, block_size
-                    if let Ok(num) = setting_strs[last].parse::<usize>() {
+                    if setting_strs[last] == "" {
+                        let defaults = [0, 10, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+                        println!("Found empty setting for {}. Defaulting to: {}", CONFIG_OPTIONS[j], defaults[j]);
+                        Ok(Setting {
+                            field: CONFIG_OPTIONS[j].to_string(),
+                            value: SettingValue::usize(defaults[j])
+                        })
+                    } else if let Ok(num) = setting_strs[last].parse::<usize>() {
                         Ok(Setting {
                             field: CONFIG_OPTIONS[j].to_string(),
                             value: SettingValue::usize(num)
@@ -103,56 +123,123 @@ impl FromStr for Setting {
                     }
                 },
                 3 => { //monochrome
-                    if setting_strs[setting_strs.len() - 1] == "" {
+                    if let Some(color) = try_str_to_refstatic_color(setting_strs[last]) {
                         Ok(Setting {
                             field: CONFIG_OPTIONS[3].to_string(),
-                            value: SettingValue::Option_refstatic_Color(None)
+                            value: Some(color)
                         })
-                    } else {
-                        if let Some(color) = try_str_to_refstatic_color(setting_strs[setting_strs]) {
-                            Ok(Setting {
-                                field: CONFIG_OPTIONS[3].to_string(),
-                                value: Some(color)
-                            })
-                        } else if setting_strs.len() >= 3 && setting_strs[last - 1] == "greyscale" {
-                            if let Ok(gs) = setting_strs[last].parse::<u8>() {
-                                if gs < 24 {
-                                    Ok(Setting {
-                                        field: CONFIG_OPTIONS[3].to_string(),
-                                        value: SettingValue::Option_refstatic_Color(
-                                            Some(AnsiValue::grayscale(gs)))
-                                    })
-                                } else {
-                                    let err = format!("Greyscale values must be less than 24!");
-                                    Err(LoadSettingError::ValueError(err))
-                                }
+                    } else if setting_strs.len() >= 3 && setting_strs.len() <= 5
+                        && setting_strs[last - 1] == "ansi" {
+                        if let Ok(gs) = setting_strs[last].parse::<u8>() {
+                            if gs < 24 {
+                                Ok(Setting {
+                                    field: CONFIG_OPTIONS[3].to_string(),
+                                    value: SettingValue::Option_refstatic_Color(
+                                        Some(AnsiValue::grayscale(gs)))
+                                })
                             } else {
-                                let err = format!("Could not read specified greyscale value: {}",
-                                    setting_strs[last]);
+                                let err = format!("Greyscale values must be less than 24!");
                                 Err(LoadSettingError::ValueError(err))
                             }
+                        } else {
+                            let err = format!("Could not read specified greyscale value: {}",
+                                setting_strs[last]);
+                            Err(LoadSettingError::ValueError(err))
                         }
+                    } else if setting_strs.len() >= 5 && setting_strs.len() <= 7
+                        && (setting_strs[last - 3] == "ansi"
+                        || setting_strs[last - 3] == "rgb") {
+                        let mut rgb = [0; 3];
+                        for i in 0..3 {
+                            if let Ok(cv) = setting_strs[last - i].parse::<u8>() {
+                                rgb[i] = cv;
+                            } else {
+                                let err = format!("Failed to read value ({}) in line: {}",
+                                    setting_strs[last - i], string);
+                                return Err(LoadSettingError::ValueError(err));
+                            }
+                        }
+                        if setting_strs[last - 3] == "ansi" {
+                            Ok(Setting {
+                                field: CONFIG_OPTIONS[3].to_string(),
+                                value: SettingValue::Option_refstatic_Color(Some(
+                                    AnsiValue::rgb(rgb[2], rgb[1], rgb[0])))
+                            })
+                        } else {
+                            Ok(Setting {
+                                field: CONFIG_OPTIONS[3].to_string(),
+                                value: SettingValue::Option_refstatic_Color(Some(
+                                    Rgb(rgb[2], rgb[1], rgb[0])))
+                            })
+                        }
+                    } else {
+                        let err = format!("Invalid monochrome setting line: {}", string);
+                        Err(LoadSettingError::ValueError(err))
                     }
                 },
-                j @ 4 | 6 => { // cascade
-
+                j @ 4 | 6 => { // cascade, ghost tetromino
+                    if setting_strs[last] == "" && j == 6 {
+                        let default = if j == 4 {
+                            false
+                        } else {
+                            true
+                        };
+                        println!("Found empty setting for ghost tetromino. Defaulting to: {}",
+                            CONFIG_OPTIONS[j], default);
+                        Ok(Setting {
+                            field: CONFIG_OPTIONS[j].to_string(),
+                            value: SettingValue::bool(default)
+                        })
+                    } else if value.as_str() == "t" || value.as_str() == "true"
+                        || value.as_str() == "1" {
+                        Ok(Setting {
+                            field: CONFIG_OPTIONS[j].to_string(),
+                            value: SettingValue::bool(true)
+                        })
+                    } else if value.as_str() == "f" || value.as_str() == "false"
+                        || value.as_str() == "0" {
+                        Ok(Setting {
+                            field: CONFIG_OPTIONS[j].to_string(),
+                            value: SettingValue::bool(false)
+                        })
+                    } else {
+                        let err = format!("Invalid setting for {} on line: {}", CONFIG_OPTIONS[j],
+                            string);
+                        Err(LoadSettingError::ValueError(err))
+                    }
                 },
                 5 => { // const_level
+                    Ok(Setting {
+                        field: CONFIG_OPTIONS[5].to_string(),
+                        value: SettingValue::Option_usize(
+                            if let Ok(lvl) = setting_strs[last].parse::<u64>() {
+                                Some(lvl)
+                            } else {
+                                None
+                            }
+                        )
+                    })
+                },
+                // border_character, corner characters, block character
+                j @ 7 | 8 | 9 | 10 | 11 | 12 => {
+                    if setting_strs[last] == "" {
+                        println!("Found empty setting for {}. Defaulting to: █", CONFIG_OPTIONS[j]);
+                        Ok(Setting {
+                            field: CONFIG_OPTIONS[j].to_string(),
+                            value: SettingValue::char('█')
+                        })
+                    }
+                },
+                8 => { // tl_corner_character
 
                 },
-                7 => { // border_character
+                9 => { // bl_corner_character
 
                 },
-                8 => { // tl_border_character
+                10 => { // br_corner_character
 
                 },
-                9 => { // bl_border_character
-
-                },
-                10 => { // br_border_character
-
-                },
-                11 => { // tr_border_character
+                11 => { // tr_corner_character
 
                 },
                 12 => { // border_color
@@ -187,7 +274,28 @@ impl FromStr for Setting {
                 },
                 23 => { // background_color
 
-                }
+                },
+                24 => { // i piece color
+
+                },
+                25 => { // j piece color
+
+                },
+                26 => { // l piece color
+
+                },
+                27 => { // s piece color
+
+                },
+                28 => { // z piece color
+
+                },
+                29 => { // t piece color
+
+                },
+                30 => { // o piece color
+
+                },
                 _ => unreachable!()
             }
         } else {
@@ -197,7 +305,7 @@ impl FromStr for Setting {
     }
 }
 
-fn load_settings(screen: &mut AlternateScreen<Stdout>) -> Result<[Setting; 22], LoadSettingError> {
+fn load_settings() -> Result<[Setting; 22], LoadSettingError> {
     let mut settings: [Setting; 22] = Default::default();
     if let Ok(mut conf_file) = File::open("../tui_tetris.conf") {
         let mut conf_file_contents = String::new();
@@ -206,7 +314,7 @@ fn load_settings(screen: &mut AlternateScreen<Stdout>) -> Result<[Setting; 22], 
                 if line == "" {
                     continue;
                 }
-                writeln!(screen, "Read line: {:?}", line);
+                println!("Read line: {:?}", line);
                 let setting_string= line.chars().take_while(|&c| c != '=').collect::<String>();
                 match
             }
@@ -240,6 +348,13 @@ pub struct GameConfig {
     hard_drop: Key,
     hold: Key,
     background_color: &'static Color,
+    i_color: &'static Color,
+    j_color: &'static Color,
+    l_color: &'static Color,
+    s_color: &'static Color,
+    z_color: &'static Color,
+    t_color: &'static Color,
+    o_color: &'static Color
 }
 
 impl GameConfig {
@@ -257,7 +372,7 @@ impl GameConfig {
             bl_corner_character: '█',
             br_corner_character: '█',
             tr_corner_character: '█',
-            border_color: &color::Fg::<White>,
+            border_color: &color::White,
             block_character: '■',
             block_size: 1,
             mode: Mode::Modern,
@@ -268,7 +383,14 @@ impl GameConfig {
             soft_drop: Key::Down,
             hard_drop: Key::Char(' '),
             hold: Key::Char('v'),
-            background_color: &color::Bg::<Black>
+            background_color: &color::Black,
+            i_color: &color::Cyan,
+            j_color: &color::Blue,
+            l_color: &color::LightRed,
+            s_color: &color::Green,
+            z_color: &color::Red,
+            t_color: &color::Magenta,
+            o_color: &color::Yellow,
         }
     }
 
