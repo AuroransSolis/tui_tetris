@@ -86,23 +86,7 @@ impl FromStr for Setting {
         if let Some(i) = CONFIG_OPTIONS.iter()
             .position(|&config_option| config_option == option) {
             match i {
-                0 => { // fps
-                    if setting_strs[last] == "" {
-                        println!("Found empty setting for FPS. Defaulting to: 60");
-                        Ok(Setting {
-                            field: CONFIG_OPTIONS[0].to_string(),
-                            value: SettingValue::u64(60)
-                        })
-                    } else if let Ok(num) = setting_strs[last].parse::<u64>() {
-                        Ok(Setting {
-                            field: CONFIG_OPTIONS[0].to_string(),
-                            value: SettingValue::u64(num)
-                        })
-                    } else {
-                        let err = format!("Found invalid value for fps: {}", setting_strs[last]);
-                        Err(LoadSettingError::ValueError(err))
-                    }
-                },
+                0 => load_u64(string),  // fps
                 j @ 1 | 2 | 14 => { // board_width, board_height, block_size
                     if setting_strs[last] == "" {
                         let defaults = [0, 10, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
@@ -323,22 +307,50 @@ fn load_settings() -> Result<[Setting; 22], LoadSettingError> {
     Ok(settings)
 }
 
-pub struct GameConfig {
+#[derive(Deserialize, Serialize)]
+pub struct GameConfigPrecursor {
     fps: u64,
     board_width: usize,
     board_height: usize,
-    monochrome: Option<&'static Color>,
-    cascade: bool,
-    const_level: Option<usize>,
-    ghost_tetromino: bool,
-    border_character: char,
-    tl_corner_character: char,
-    bl_corner_character: char,
-    br_corner_character: char,
-    tr_corner_character: char,
-    border_color: &'static Color,
-    block_character: char,
+    mode: String,
+    left: String,
+    right: String,
+    rotate_clockwise: String,
+    rotate_anticlockwise: String,
+    soft_drop: String,
+    hard_drop: Option<String>,
+    hold: Option<String>,
+    // Optional gameplay settings
+    ghost_tetromino: Option<bool>,
+    cascade: Option<bool>,
+    constant_drop_rate: Option<u64>,
+    // Optional game appearance setting
+    monochrome: Option<String>,
+    // Optional board appearance settings
+    border_color: Option<String>,
+    border_character: Option<char>,
+    top_left_corner_character: Option<char>,
+    bottom_left_corner_character: Option<char>,
+    bottom_right_corner_character: Option<char>,
+    top_right_corner_character: Option<char>,
+    background_color: Option<String>,
+    // Optional block appearance settings
+    block_character: Option<String>,
     block_size: usize,
+    i_piece_color: Option<String>,
+    j_piece_color: Option<String>,
+    l_piece_color: Option<String>,
+    s_piece_color: Option<String>,
+    z_piece_color: Option<String>,
+    t_piece_color: Option<String>,
+    o_piece_color: Option<String>
+}
+
+pub struct GameConfig {
+    // Required game settings
+    fps: u64,
+    board_width: usize,
+    board_height: usize,
     mode: Mode,
     left: Key,
     right: Key,
@@ -347,7 +359,23 @@ pub struct GameConfig {
     soft_drop: Key,
     hard_drop: Key,
     hold: Key,
+    // Optional gameplay settings
+    ghost_tetromino: bool,
+    cascade: bool,
+    const_level: Option<usize>,
+    // Optional game appearance setting
+    monochrome: Option<&'static Color>,
+    // Optional board appearance settings
+    border_color: &'static Color,
+    border_character: char,
+    tl_corner_character: char,
+    bl_corner_character: char,
+    br_corner_character: char,
+    tr_corner_character: char,
     background_color: &'static Color,
+    // Optional block appearance settings
+    block_character: char,
+    block_size: usize,
     i_color: &'static Color,
     j_color: &'static Color,
     l_color: &'static Color,
@@ -569,6 +597,24 @@ impl GameConfig {
             Some(GameConfig::default())
         };
         gc
+    }
+}
+
+fn load_u64(s: &str) -> Result<Setting, LoadSettingError> {
+    if setting_strs[last] == "" {
+        println!("Found empty setting for FPS. Defaulting to: 60");
+        Ok(Setting {
+            field: CONFIG_OPTIONS[0].to_string(),
+            value: SettingValue::u64(60)
+        })
+    } else if let Ok(num) = setting_strs[last].parse::<u64>() {
+        Ok(Setting {
+            field: CONFIG_OPTIONS[0].to_string(),
+            value: SettingValue::u64(num)
+        })
+    } else {
+        let err = format!("Found invalid value for fps: {}", setting_strs[last]);
+        Err(LoadSettingError::ValueError(err))
     }
 }
 
