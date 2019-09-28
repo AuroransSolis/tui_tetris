@@ -2,16 +2,22 @@ use super::*;
 use std::io::Read;
 use std::hint::unreachable_unchecked;
 use std::str::FromStr;
+use std::collections::HashMap;
+use crossterm::{Color, InputEvent, KeyEvent};
 
-const CONFIG_OPTIONS: [&str; 31] = [
+const CONFIG_OPTIONS: [&str; 35] = [
     "fps",
     "board_width",
     "board_height",
     "monochrome",
     "cascade",
     "const_level",
-    "ghost_tetromino",
-    "border_character",
+    "ghost_tetromino_character",
+    "ghost_tetromino_color",
+    "top_border_character",
+    "left_border_character",
+    "bottom_border_character",
+    "right_border_character",
     "tl_corner_character",
     "bl_corner_character",
     "br_corner_character",
@@ -37,313 +43,208 @@ const CONFIG_OPTIONS: [&str; 31] = [
     "o_color"
 ];
 
+const D_FPS: u64 = 60;
+const D_BOARD_WIDTH: usize = 10;
+const D_BOARD_HEIGHT: usize = 20;
+const D_MODE: Mode = Mode::Modern;
+const D_LEFT: KeyEvent = KeyEvent::Left;
+const D_RIGHT: KeyEvent = KeyEvent::Right;
+const D_ROT_CW: KeyEvent = KeyEvent::ShiftLeft;
+const D_ROT_ACW: KeyEvent = KeyEvent::Up;
+const D_SOFT_DROP: KeyEvent = KeyEvent::Down;
+const D_HARD_DROP: KeyEvent = KeyEvent::Char(' ');
+const D_HOLD: KeyEvent = KeyEvent::Char('c');
+const D_GHOST_TETROMINO_CHARACTER: Option<char> = Some('⬜');
+const D_GHOST_TETROMINO_COLOR: Option<Color> = Some(Color::Rgb {r: 240, g: 240, b: 240});
+const D_CASCADE: bool = false;
+const D_CONST_LEVEL: Option<usize> = None;
+const D_MONOCHROME: Option<Color> = None;
+const D_BORDER_COLOR: Color = Color::Rgb {r: 255, g: 255, b: 255};
+const D_TOP_BORDER_CHARACTER: char = '═';
+const D_TL_CORNER_CHARACTER: char = '╔';
+const D_LEFT_BORDER_CHARACTER: char = '║';
+const D_BL_CORNER_CHARACTER: char = '╚';
+const D_BOTTOM_BORDER_CHARACTER: char = '═';
+const D_BR_CORNER_CHARACTER: char = '╝';
+const D_RIGHT_BORDER_CHARACTER: char = '║';
+const D_TR_CORNER_CHARACTER: char = '╗';
+const D_BACKGROUND_COLOR: Color = Color::Rgb {r: 0, g: 0, b: 0};
+const D_BLOCK_CHARACTER: char = '⬛';
+const D_BLOCK_SIZE: usize = 1;
+const D_I_COLOR: Color = Color::Rgb {r: 0, g: 240, b: 240};
+const D_J_COLOR: Color = Color::Rgb {r: 0, g: 0, b: 240};
+const D_L_COLOR: Color = Color::Rgb {r: 240, g: 160, b: 0};
+const D_S_COLOR: Color = Color::Rgb {r: 0, g: 240, b: 0};
+const D_Z_COLOR: Color = Color::Rgb {r: 240, g: 0, b: 0};
+const D_T_COLOR: Color = Color::Rgb {r: 160, g: 0, b: 240};
+const D_O_COLOR: Color = Color::Rgb {r: 240, g: 240, b: 0};
+
+const VALID_SETTINGS: &'static str = "\
+Valid settings: fps, board_width, board_height, monochrome, cascade,\n\
+const_level, ghost_tetromino, border_character, tl_corner_character,\n\
+bl_corner_character, br_corner_character, tr_corner_character, border_color,\n\
+block_character, block_size, mode, move_left, move_right, rotate_clockwise,\n\
+rotate_anticlockwise, soft_drop, hard_drop, hold, background_color, i_color,\n\
+j_color, l_color, s_color, z_color, t_color, o_color";
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Mode {
     Classic,
     Modern
 }
 
-enum SettingValue {
-    u64(u64),
-    usize(usize),
-    Option_refstatic_Color(Option<&'static Color>),
-    Color(&'static Color),
-    bool(bool),
-    Option_usize(Option<usize>),
-    char(char),
-    Mode(Mode),
-    Key(Key),
-    Empty
+pub enum ParseErrorKind {
+    InvalidLineFormat,
+    UnknownSetting,
+    InvalidValue,
+    DuplicateSetting,
+    FailedParseValue,
+    MissingValue
 }
 
-enum LoadSettingError {
-    ValueError(String),
-    InvalidSetting(String)
+pub struct ParseError {
+    kind: ParseErrorKind,
+    line_no: usize,
+    line: String,
+    correction: Option<&'static str>
 }
 
-struct Setting {
-    field: String,
-    value: SettingValue
-}
-
-impl Default for Setting {
-    fn default() -> Self {
-        Setting {
-            field: "".to_string(),
-            value: SettingValue::Empty
+impl ParseError {
+    pub fn new(kind: ParseErrorKind, line_no: usize, line: &str, correction: Option<&'static str>)
+        -> Self {
+        ParseError {
+            kind,
+            line_no,
+            line: line.to_owned(),
+            correction
         }
     }
 }
 
-impl FromStr for Setting {
-    type Err = LoadSettingError;
+fn general_parse<T>(map: &mut HashMap<&str, (&str, usize, &str)>, key: &str, default: T,
+    parser: fn(&str, usize, &str) -> Result<T, ParseError>) -> Result<T, ParseError> {
+    if let Some((unparsed_setting, line_num, line)) = map.remove(key) {
+        parser(unparsed_setting, line_num, line)
+    } else {
+        Ok(default)
+    }
+}
 
-    fn from_str(string: &str) -> Result<Self, Self::Err> {
-        let setting_strs = string.split(|c| c == ' ' || c == '=').collect::<Vec<&str>>();
-        let last = setting_strs.len() - 1;
-        let option = setting_strs[0].to_lowercase().as_str();
-        let value = setting_strs[last].to_lowercase().as_str();
-        if let Some(i) = CONFIG_OPTIONS.iter()
-            .position(|&config_option| config_option == option) {
-            match i {
-                0 => load_u64(string),  // fps
-                j @ 1 | 2 | 14 => { // board_width, board_height, block_size
-                    if setting_strs[last] == "" {
-                        let defaults = [0, 10, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-                        println!("Found empty setting for {}. Defaulting to: {}", CONFIG_OPTIONS[j], defaults[j]);
-                        Ok(Setting {
-                            field: CONFIG_OPTIONS[j].to_string(),
-                            value: SettingValue::usize(defaults[j])
-                        })
-                    } else if let Ok(num) = setting_strs[last].parse::<usize>() {
-                        Ok(Setting {
-                            field: CONFIG_OPTIONS[j].to_string(),
-                            value: SettingValue::usize(num)
-                        })
-                    } else {
-                        let err = format!("Found invalid value for {}: {}", CONFIG_OPTIONS[j],
-                            setting_strs[last]);
-                        Err(LoadSettingError::ValueError(err))
-                    }
-                },
-                3 => { //monochrome
-                    if let Some(color) = try_str_to_refstatic_color(setting_strs[last]) {
-                        Ok(Setting {
-                            field: CONFIG_OPTIONS[3].to_string(),
-                            value: Some(color)
-                        })
-                    } else if setting_strs.len() >= 3 && setting_strs.len() <= 5
-                        && setting_strs[last - 1] == "ansi" {
-                        if let Ok(gs) = setting_strs[last].parse::<u8>() {
-                            if gs < 24 {
-                                Ok(Setting {
-                                    field: CONFIG_OPTIONS[3].to_string(),
-                                    value: SettingValue::Option_refstatic_Color(
-                                        Some(AnsiValue::grayscale(gs)))
-                                })
-                            } else {
-                                let err = format!("Greyscale values must be less than 24!");
-                                Err(LoadSettingError::ValueError(err))
-                            }
-                        } else {
-                            let err = format!("Could not read specified greyscale value: {}",
-                                setting_strs[last]);
-                            Err(LoadSettingError::ValueError(err))
-                        }
-                    } else if setting_strs.len() >= 5 && setting_strs.len() <= 7
-                        && (setting_strs[last - 3] == "ansi"
-                        || setting_strs[last - 3] == "rgb") {
-                        let mut rgb = [0; 3];
-                        for i in 0..3 {
-                            if let Ok(cv) = setting_strs[last - i].parse::<u8>() {
-                                rgb[i] = cv;
-                            } else {
-                                let err = format!("Failed to read value ({}) in line: {}",
-                                    setting_strs[last - i], string);
-                                return Err(LoadSettingError::ValueError(err));
-                            }
-                        }
-                        if setting_strs[last - 3] == "ansi" {
-                            Ok(Setting {
-                                field: CONFIG_OPTIONS[3].to_string(),
-                                value: SettingValue::Option_refstatic_Color(Some(
-                                    AnsiValue::rgb(rgb[2], rgb[1], rgb[0])))
-                            })
-                        } else {
-                            Ok(Setting {
-                                field: CONFIG_OPTIONS[3].to_string(),
-                                value: SettingValue::Option_refstatic_Color(Some(
-                                    Rgb(rgb[2], rgb[1], rgb[0])))
-                            })
-                        }
-                    } else {
-                        let err = format!("Invalid monochrome setting line: {}", string);
-                        Err(LoadSettingError::ValueError(err))
-                    }
-                },
-                j @ 4 | 6 => { // cascade, ghost tetromino
-                    if setting_strs[last] == "" && j == 6 {
-                        let default = if j == 4 {
-                            false
-                        } else {
-                            true
-                        };
-                        println!("Found empty setting for ghost tetromino. Defaulting to: {}",
-                            CONFIG_OPTIONS[j], default);
-                        Ok(Setting {
-                            field: CONFIG_OPTIONS[j].to_string(),
-                            value: SettingValue::bool(default)
-                        })
-                    } else if value.as_str() == "t" || value.as_str() == "true"
-                        || value.as_str() == "1" {
-                        Ok(Setting {
-                            field: CONFIG_OPTIONS[j].to_string(),
-                            value: SettingValue::bool(true)
-                        })
-                    } else if value.as_str() == "f" || value.as_str() == "false"
-                        || value.as_str() == "0" {
-                        Ok(Setting {
-                            field: CONFIG_OPTIONS[j].to_string(),
-                            value: SettingValue::bool(false)
-                        })
-                    } else {
-                        let err = format!("Invalid setting for {} on line: {}", CONFIG_OPTIONS[j],
-                            string);
-                        Err(LoadSettingError::ValueError(err))
-                    }
-                },
-                5 => { // const_level
-                    Ok(Setting {
-                        field: CONFIG_OPTIONS[5].to_string(),
-                        value: SettingValue::Option_usize(
-                            if let Ok(lvl) = setting_strs[last].parse::<u64>() {
-                                Some(lvl)
-                            } else {
-                                None
-                            }
-                        )
-                    })
-                },
-                // border_character, corner characters, block character
-                j @ 7 | 8 | 9 | 10 | 11 | 12 => {
-                    if setting_strs[last] == "" {
-                        println!("Found empty setting for {}. Defaulting to: █", CONFIG_OPTIONS[j]);
-                        Ok(Setting {
-                            field: CONFIG_OPTIONS[j].to_string(),
-                            value: SettingValue::char('█')
-                        })
-                    }
-                },
-                8 => { // tl_corner_character
+fn parse_u64(rhs: &str, line_num: usize, line: &str) -> Result<u64, ParseError> {
+    let parsed_value = rhs.parse::<u64>().map_err(|| {
+        ParseError::new(ParseErrorKind::FailedParseValue, line_num, line,
+            Some("FPS setting takes an integer value."));
+    })?;
+    if parsed_value == 0 {
+        Err(ParseError(ParseErrorKind::InvalidValue, line_num, line,
+            Some("FPS value must be greater than 0.")))
+    } else {
+        Ok(parsed_value)
+    }
+}
 
-                },
-                9 => { // bl_corner_character
+fn parse_board_dimension(rhs: &str, line_num: usize, line: &str) -> Result<usize, ParseError> {
+    let parsed_value = rhs.parse::<usize>().map_err(|| {
+        ParseError::new(ParseErrorKind::FailedParseValue, line_num, line,
+            Some("Board dimensions must be specified using integer values."))
+    })?;
+    if parsed_value == 0 {
+        Err(ParseError(ParseErrorKind::InvalidValue, line_num, line,
+            Some("Board dimensions must be greater than 0.")))
+    } else {
+        Ok(parsed_value)
+    }
+}
 
-                },
-                10 => { // br_corner_character
+fn parse_mode(rhs: &str, line_num: usize, line: &str) -> Result<Mode, ParseError> {
+    match rhs.to_ascii_lowercase().as_str() {
+        "c" | "classic" => Ok(Mode::Classic),
+        "m" | "modern" => Ok(Mode::Modern),
+        _ => Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line,
+            Some("Accepted game mode indicators: c, classic, m, modern.")))
+    }
+}
 
-                },
-                11 => { // tr_corner_character
-
-                },
-                12 => { // border_color
-
-                },
-                13 => { // block_character
-
-                },
-                15 => { // mode
-
-                },
-                16 => { // move_left
-
-                },
-                17 => { // move_right
-
-                },
-                18 => { // rotate_clockwise
-
-                },
-                19 => { // rotate_anticlockwise
-
-                },
-                20 => { // soft_drop
-
-                },
-                21 => { // hard_drop
-
-                },
-                22 => { // hold
-
-                },
-                23 => { // background_color
-
-                },
-                24 => { // i piece color
-
-                },
-                25 => { // j piece color
-
-                },
-                26 => { // l piece color
-
-                },
-                27 => { // s piece color
-
-                },
-                28 => { // z piece color
-
-                },
-                29 => { // t piece color
-
-                },
-                30 => { // o piece color
-
-                },
-                _ => unreachable!()
-            }
-        } else {
-            let err = format!("Invalid setting: {}", string);
-            Err(LoadSettingError::InvalidSetting(err))
+fn parse_keyevent(rhs: &str, line_num: usize, line: &str) -> Result<KeyEvent, ParseError> {
+    match rhs.len() {
+        1 => Ok(KeyEvent::Char(rhs.chars().next().unwrap())),
+        _ => match rhs {
+            "space" => Ok(KeyEvent::Char(' ')),
+            "left" => Ok(KeyEvent::Left),
+            "right" => Ok(KeyEvent::Right),
+            "up" => Ok(KeyEvent::Up),
+            "down" => Ok(KeyEvent::Down),
+            "lshift" => Ok(KeyEvent::ShiftLeft),
+            "rshift" => Ok(KeyEvent::ShiftRight),
+            "lctrl" => Ok(KeyEvent::CtrlLeft),
+            "rctrl" => Ok(KeyEvent::CtrlRight),
+            "esc" => Ok(KeyEvent::Esc),
+            _ => Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line,
+                Some("Supported non-single-character values: 'space', 'left', 'right', 'up', \
+                'down', 'lshift', 'rshift', 'lctrl', 'rctrl', and 'esc'.")))
         }
     }
 }
 
-fn load_settings() -> Result<[Setting; 22], LoadSettingError> {
-    let mut settings: [Setting; 22] = Default::default();
-    if let Ok(mut conf_file) = File::open("../tui_tetris.conf") {
-        let mut conf_file_contents = String::new();
-        if let Ok(_) = conf_file.read_to_string(&mut conf_file_contents) {
-            for (line_no, line) in conf_file_contents.lines().enumerate() {
-                if line == "" {
-                    continue;
-                }
-                println!("Read line: {:?}", line);
-                let setting_string= line.chars().take_while(|&c| c != '=').collect::<String>();
-                match
-            }
-        }
+fn parse_bool(rhs: &str, line_num: usize, line: &str) -> Result<bool, ParseError> {
+    match rhs.to_ascii_lowercase().as_str() {
+        "1" | "t" | "true" => Ok(true),
+        "0" | "f" | "false" => Ok(false),
+        _ => Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line,
+            Some("Accepted boolean values: 1, t, true, 0, f, false")))
     }
-    Ok(settings)
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct GameConfigPrecursor {
-    fps: u64,
-    board_width: usize,
-    board_height: usize,
-    mode: String,
-    left: String,
-    right: String,
-    rotate_clockwise: String,
-    rotate_anticlockwise: String,
-    soft_drop: String,
-    hard_drop: Option<String>,
-    hold: Option<String>,
-    // Optional gameplay settings
-    ghost_tetromino: Option<bool>,
-    cascade: Option<bool>,
-    constant_drop_rate: Option<u64>,
-    // Optional game appearance setting
-    monochrome: Option<String>,
-    // Optional board appearance settings
-    border_color: Option<String>,
-    border_character: Option<char>,
-    top_left_corner_character: Option<char>,
-    bottom_left_corner_character: Option<char>,
-    bottom_right_corner_character: Option<char>,
-    top_right_corner_character: Option<char>,
-    background_color: Option<String>,
-    // Optional block appearance settings
-    block_character: Option<String>,
-    block_size: usize,
-    i_piece_color: Option<String>,
-    j_piece_color: Option<String>,
-    l_piece_color: Option<String>,
-    s_piece_color: Option<String>,
-    z_piece_color: Option<String>,
-    t_piece_color: Option<String>,
-    o_piece_color: Option<String>
+fn parse_color(rhs: &str, line_num: usize, line: &str) -> Result<Color, ParseError> {
+    let mut parts = rhs.split_whitespace();
+    let color_type = parts.next().ok_or_else(|| ParseError::new(ParseErrorKind::MissingValue,
+        line_num, line, Some("Missing color type.")))?;
+    let color = parts.next().ok_or_else(|| ParseError::new(ParseErrorKind::MissingValue, line_num,
+        line, Some("Missing color.")))?;
+    match color_type.to_ascii_lowercase().as_str() {
+        "rgb" => {
+            let (r, g, b) = parse_rgb_triple(color, line_num, line)?;
+            Ok(Color::Rgb {r, g, b})
+        },
+        "ansi" => {
+            let c = color.parse::<u8>().map_err(|| ParseError::new(ParseErrorKind::FailedParseValue,
+                line_num, line, Some("Failed to parse ANSI color value.")))?;
+            Ok(Color::AnsiValue(c))
+        },
+        _ => Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line,
+            Some("Accepted color formats are: rgb, ansi.")))
+    }
+}
+
+fn parse_rgb_triple(s: &str, line_num: usize, line: &str) -> Result<(u8, u8, u8), ParseError> {
+    let mut parts = s.split(',');
+    let r = parts.next().ok_or_else(|| ParseError::new(ParseErrorKind::MissingValue, line_num, line,
+        Some("Missing R value.")))?.parse::<u8>().map_err(|| ParseErrorKind::FailedParseValue,
+        line_num, line, Some("Failed to parse R value."))?;
+    let g = parts.next().ok_or_else(|| ParseError::new(ParseErrorKind::MissingValue, line_num, line,
+        Some("Missing G value.")))?.parse::<u8>().map_err(|| ParseErrorKind::FailedParseValue,
+        line_num, line, Some("Failed to parse G value."))?;
+    let b = parts.next().ok_or_else(|| ParseError::new(ParseErrorKind::MissingValue, line_num, line,
+        Some("Missing B value.")))?.parse::<u8>().map_err(|| ParseErrorKind::FailedParseValue,
+        line_num, line, Some("Failed to parse B value."))?;
+    Ok((r, g, b))
+}
+
+fn parse_char(rhs: &str, line_num: usize, line: &str) -> Result<char, ParseError> {
+    if rhs.len() != 1 {
+        Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line,
+            Some("Expected a single character value.")))
+    } else {
+        Ok(rhs.chars().next().unwrap())
+    }
+}
+
+fn parse_opt_char(rhs: &str, line_num: usize, line: &str) -> Result<Option<char>, ParseError> {
+    if rhs.len() == 0 {
+        Ok(None)
+    } else {
+        parse_char(rhs, line_num, line)
+    }
 }
 
 pub struct GameConfig {
@@ -352,75 +253,165 @@ pub struct GameConfig {
     board_width: usize,
     board_height: usize,
     mode: Mode,
-    left: Key,
-    right: Key,
-    rot_cw: Key,
-    rot_acw: Key,
-    soft_drop: Key,
-    hard_drop: Key,
-    hold: Key,
+    left: KeyEvent,
+    right: KeyEvent,
+    rot_cw: KeyEvent,
+    rot_acw: KeyEvent,
+    soft_drop: KeyEvent,
+    hard_drop: KeyEvent,
+    hold: KeyEvent,
     // Optional gameplay settings
-    ghost_tetromino: bool,
+    ghost_tetromino_character: Option<char>,
+    ghost_tetromino_color: Option<Color>,
     cascade: bool,
     const_level: Option<usize>,
     // Optional game appearance setting
-    monochrome: Option<&'static Color>,
+    monochrome: Option<Color>,
     // Optional board appearance settings
-    border_color: &'static Color,
-    border_character: char,
+    border_color: Color,
+    top_border_character: char,
     tl_corner_character: char,
+    left_border_character: char,
     bl_corner_character: char,
+    bottom_border_character: char,
     br_corner_character: char,
+    right_border_character: char,
     tr_corner_character: char,
-    background_color: &'static Color,
+    background_color: Color,
     // Optional block appearance settings
     block_character: char,
     block_size: usize,
-    i_color: &'static Color,
-    j_color: &'static Color,
-    l_color: &'static Color,
-    s_color: &'static Color,
-    z_color: &'static Color,
-    t_color: &'static Color,
-    o_color: &'static Color
+    i_color: Color,
+    j_color: Color,
+    l_color: Color,
+    s_color: Color,
+    z_color: Color,
+    t_color: Color,
+    o_color: Color
 }
 
 impl GameConfig {
     pub fn default() -> Self {
         GameConfig {
-            fps: 60,
-            board_width: 10,
-            board_height: 20,
-            monochrome: None,
-            cascade: false,
-            const_level: None,
-            ghost_tetromino: true,
-            border_character: '█',
-            tl_corner_character: '█',
-            bl_corner_character: '█',
-            br_corner_character: '█',
-            tr_corner_character: '█',
-            border_color: &color::White,
-            block_character: '■',
-            block_size: 1,
-            mode: Mode::Modern,
-            left: Key::Left,
-            right: Key::Right,
-            rot_cw: Key::Char('z'),
-            rot_acw: Key::Up,
-            soft_drop: Key::Down,
-            hard_drop: Key::Char(' '),
-            hold: Key::Char('v'),
-            background_color: &color::Black,
-            i_color: &color::Cyan,
-            j_color: &color::Blue,
-            l_color: &color::LightRed,
-            s_color: &color::Green,
-            z_color: &color::Red,
-            t_color: &color::Magenta,
-            o_color: &color::Yellow,
+            fps: D_FPS,
+            board_width: D_BOARD_WIDTH,
+            board_height: D_BOARD_HEIGHT,
+            mode: D_MODE,
+            left: D_LEFT,
+            right: D_RIGHT,
+            rot_cw: D_ROT_CW,
+            rot_acw: D_ROT_ACW,
+            soft_drop: D_SOFT_DROP,
+            hard_drop: D_HARD_DROP,
+            hold: D_HOLD,
+            ghost_tetromino_character: D_GHOST_TETROMINO_CHARACTER,
+            ghost_tetromino_color: D_GHOST_TETROMINO_COLOR,
+            cascade: D_CASCADE,
+            const_level: D_CONST_LEVEL,
+            monochrome: D_MONOCHROME,
+            border_color: D_BORDER_COLOR,
+            top_border_character: D_TOP_BORDER_CHARACTER,
+            tl_corner_character: D_TL_CORNER_CHARACTER,
+            left_border_character: D_LEFT_BORDER_CHARACTER,
+            bl_corner_character: D_BL_CORNER_CHARACTER,
+            bottom_border_character: D_BOTTOM_BORDER_CHARACTER,
+            br_corner_character: D_BR_CORNER_CHARACTER,
+            right_border_character: D_RIGHT_BORDER_CHARACTER,
+            tr_corner_character: D_TR_CORNER_CHARACTER,
+            background_color: D_BACKGROUND_COLOR,
+            block_character: D_BLOCK_CHARACTER,
+            block_size: D_BLOCK_SIZE,
+            i_color: D_I_COLOR,
+            j_color: D_J_COLOR,
+            l_color: D_L_COLOR,
+            s_color: D_S_COLOR,
+            z_color: D_Z_COLOR,
+            t_color: D_T_COLOR,
+            o_color: D_O_COLOR
         }
     }
+
+    fn parse(s: &str) /*-> Result<Self, ParseError>*/ {
+        let mut settings = HashMap::with_capacity(31);
+        for (num, line) in s.lines().enumerate() {
+            if line.len() == 0 {
+                continue;
+            }
+            if let Some('#') = line.chars().take(1).next() {
+                continue;
+            }
+            let mut sections = line.split('=').trim();
+            let lhs = sections.next()
+                .ok_or_else(||
+                    ParseError::new(ParseErrorKind::InvalidLineFormat, num, line, None)
+                )?;
+            if lhs.len() == 0 {
+                return Err(ParseError::new(ParseErrorKind::InvalidLineFormat, num, line,
+                    Some("There must be a setting name on the left side of the equals sign.")));
+            }
+            let rhs = sections.next()
+                .ok_or_else(||
+                    ParseError::new(ParseErrorKind::InvalidLineFormat, num, line, None)
+                )?;
+            if rhs.len() == 0 {
+                return Err(ParseError::new(ParseErrorKind::InvalidLineFormat, num, line,
+                    Some("There must be a value on the right side of the equals sign.")));
+            }
+            if CONFIG_OPTIONS.contains(lhs) {
+                if settings.insert(lhs, (rhs, num, line)).is_some() {
+                    return Err(ParseError::new(ParseErrorKind::DuplicateSetting, num, line, None));
+                }
+            } else {
+                return Err({
+                    ParseError::new(ParseErrorKind::UnknownSetting, num, line, Some(VALID_SETTINGS))
+                });
+            }
+        }
+        let fps = general_parse::<u64>(&mut settings, "fps", D_FPS, parse_u64)?;
+        let board_width = general_parse::<usize>(&mut settings, "board_width", D_BOARD_WIDTH,
+            parse_board_dimension)?;
+        let board_height = general_parse::<usize>(&mut settings, "board_height", D_BOARD_HEIGHT,
+            parse_board_dimension)?;
+        let mode = general_parse::<Mode>(&mut settings, "mode", D_MODE, parse_mode)?;
+        let left = general_parse::<KeyEvent>(&mut settings, "left", D_LEFT, parse_keyevent)?;
+        let right = general_parse::<KeyEvent>(&mut settings, "right", D_RIGHT, parse_keyevent)?;
+        let rot_cw = general_parse::<KeyEvent>(&mut settings, "rot_cw", D_ROT_CW, parse_keyevent)?;
+        let rot_acw = general_parse::<KeyEvent>(&mut settings, "rot_acw", D_ROT_ACW,
+            parse_keyevent)?;
+        let soft_drop = general_parse::<KeyEvent>(&mut settings, "soft_drop", D_SOFT_DROP,
+            parse_keyevent)?;
+        let hard_drop = general_parse::<KeyEvent>(&mut settings, "hard_drop", D_HARD_DROP,
+            parse_keyevent)?;
+        let hold = general_parse::<KeyEvent>(&mut settings, "hold", D_HOLD, parse_keyevent)?;
+        let ghost_tetromino_character = general_parse::<Option<char>>(&mut settings,
+            "ghost_tetromino_character", D_GHOST_TETROMINO_CHARACTER, parse_opt_char)?;
+        let ghost_tetromino_color = general_parse(&mut settings, "ghost_tetromino_color", ,)?;
+        let cascade = general_parse(&mut settings, "cascade", ,)?;
+        let const_level = general_parse(&mut settings, "const_level", ,)?;
+        let monochrome = general_parse(&mut settings, "monochrome", ,)?;
+        let border_color = general_parse(&mut settings, "border_color", ,)?;
+        let top_border_character = general_parse::<char>(&mut settings, "top_border_character", ,)?;
+        let tl_corner_character = general_parse::<char>(&mut settings, "tl_corner_character", ,)?;
+        let left_border_character = general_parse::<char>(&mut settings, "left_border_character", ,)?;
+        let bl_corner_character = general_parse::<char>(&mut settings, "bl_corner_character", ,)?;
+        let bottom_border_character = general_parse::<char>(&mut settings, "bottom_border_character", ,)?;
+        let br_corner_character = general_parse::<char>(&mut settings, "br_corner_character", ,)?;
+        let right_border_character = general_parse::<char>(&mut settings, "right_border_character", ,)?;
+        let tr_corner_character = general_parse::<char>(&mut settings, "tr_corner_character", ,)?;
+        let background_color = general_parse(&mut settings, "background_color", ,)?;
+        let block_character = general_parse::<char>(&mut settings, "block_character", ,)?;
+        let block_size = general_parse(&mut settings, "block_size", ,)?;
+        let i_color = general_parse(&mut settings, "i_color", ,)?;
+        let j_color = general_parse(&mut settings, "j_color", ,)?;
+        let l_color = general_parse(&mut settings, "l_color", ,)?;
+        let s_color = general_parse(&mut settings, "s_color", ,)?;
+        let z_color = general_parse(&mut settings, "z_color", ,)?;
+        let t_color = general_parse(&mut settings, "t_color", ,)?;
+        let o_color = general_parse(&mut settings, "o_color", ,)?;
+    }
+}
+
+impl GameConfig {
 
     // Redundant code here since I wasn't sure how I was going to load/apply settings when I first
     // started writing it and I haven't gone back to delete it since making a decision.
@@ -560,27 +551,27 @@ impl GameConfig {
                             },
                             21 => {
                                 if set[13] && game_config.mode == Mode::Classic {
-                                    write!(screen, "Classic mode is selected but hold key is \
+                                    write!(screen, "Classic mode is selected but hold KeyEvent is \
                                         specified. Ignoring.\n").unwrap();
                                 }
-                                let hold_key = lowercase_line.chars().rev()
+                                let hold_KeyEvent = lowercase_line.chars().rev()
                                     .take_while(|&c| c != ' ' && c != '=')
                                     .collect::<String>();
-                                let hold_key = hold_key.chars().rev().collect::<String>();
-                                if hold_key.len() > 1 {
-                                    match hold_key.to_lowercase().as_str() {
-                                        "up" => game_config.hold = Key::Up,
-                                        "down" => game_config.hold = Key::Down,
-                                        "left" => game_config.hold = Key::Left,
-                                        "right" => game_config.hold = Key::Right,
+                                let hold_KeyEvent = hold_KeyEvent.chars().rev().collect::<String>();
+                                if hold_KeyEvent.len() > 1 {
+                                    match hold_KeyEvent.to_lowercase().as_str() {
+                                        "up" => game_config.hold = KeyEvent::Up,
+                                        "down" => game_config.hold = KeyEvent::Down,
+                                        "left" => game_config.hold = KeyEvent::Left,
+                                        "right" => game_config.hold = KeyEvent::Right,
                                         _ => {
-                                            write!(screen, "{} is not an acceptable hold key. Line \
-                                                {}: {}\n", hold_key, no, line).unwrap();
+                                            write!(screen, "{} is not an acceptable hold KeyEvent. Line \
+                                                {}: {}\n", hold_KeyEvent, no, line).unwrap();
                                             return None;
                                         }
                                     }
                                 } else {
-                                    game_config.hold = Key::Char(hold_key.chars().next().unwrap());
+                                    game_config.hold = KeyEvent::Char(hold_KeyEvent.chars().next().unwrap());
 
                                 }
                             },
@@ -618,7 +609,7 @@ fn load_u64(s: &str) -> Result<Setting, LoadSettingError> {
     }
 }
 
-fn try_str_to_refstatic_color(s: &str) -> Option<&'static Color> {
+fn try_str_to_refstatic_color(s: &str) -> Option<Color> {
     if s == "black" {
         Some(&color::Black)
     } else if s == "blue" {
