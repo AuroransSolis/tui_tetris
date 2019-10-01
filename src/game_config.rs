@@ -44,6 +44,22 @@ const CONFIG_OPTIONS: [&str; 35] = [
     "o_color"
 ];
 
+trait ValidConfigType {}
+
+macro_rules! impl_vct {
+    ($($t:ty),*) => ($(
+        impl ValidConfigType for $t {}
+    )*)
+}
+
+impl_vct!{
+    u64, usize, Mode, KeyEvent, Option<char>, Option<Color>, bool, Option<usize>, Color, char
+}
+
+trait ValidConfigParser
+
+const CONFIG_PARSERS: [fn<T: ValidConfigType>(&mut HashMap<&str, (&str, usize, &str)>, )]
+
 const D_FPS: u64 = 60;
 const D_BOARD_WIDTH: usize = 10;
 const D_BOARD_HEIGHT: usize = 20;
@@ -265,7 +281,16 @@ fn parse_opt_usize(rhs: &str, line_num: usize, line: &str) -> Result<Option<usiz
     if rhs.len() == 0 {
         None
     } else {
-        Ok(Some(parse_usize(rhs, line_num, line)))
+        Ok(Some(parse_usize(rhs, line_num, line)?))
+    }
+}
+
+fn opt_general_parse<T>(map: &mut HashMap<&str, (&str, usize, &str)>, key: &str, default: Option<T>,
+    parser: fn(&str, usize, &str) -> Result<T, ParseError>) -> Result<Option<T>, ParseError> {
+    if let Some((rhs, line_num, line)) = map.remove(key) {
+        Ok(Some(parser(rhs, line_num, line)?))
+    } else {
+        default
     }
 }
 
@@ -277,6 +302,22 @@ fn parse_num_range<T: PartialOrd + FromStr>(map: &mut HashMap<&str, (&str, usize
             line_num, line, Some(fp_message)))?;
         if range.contains(&parsed) {
             Ok(parsed)
+        } else {
+            Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line, Some(oor_message)))
+        }
+    } else {
+        Ok(default)
+    }
+}
+
+fn opt_parse_num_range<T: PartialOrd + FromStr>(map: &mut HashMap<&str, (&str, usize, &str)>,
+    key: &str, default: Option<T>, range: Range<T>, fp_message: &'static str,
+    oor_message: &'static str) -> Result<Option<T>, ParseError> {
+    if let Some((rhs, line_num, line)) = map.remove(key) {
+        let parsed = rhs.parse::<T>().map_err(|| ParseError::new(ParseErrorKind::FailedParseValue,
+            line_num, line, Some(fp_message)))?;
+        if range.contains(&parsed) {
+            Ok(Some(parsed))
         } else {
             Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line, Some(oor_message)))
         }
@@ -421,10 +462,10 @@ impl GameConfig {
         let hard_drop = general_parse::<KeyEvent>(&mut settings, "hard_drop", D_HARD_DROP,
             parse_keyevent)?;
         let hold = general_parse::<KeyEvent>(&mut settings, "hold", D_HOLD, parse_keyevent)?;
-        let ghost_tetromino_character = general_parse::<Option<char>>(&mut settings,
-            "ghost_tetromino_character", D_GHOST_TETROMINO_CHARACTER, parse_opt_char)?;
-        let ghost_tetromino_color = general_parse::<Option<Color>>(&mut settings,
-            "ghost_tetromino_color", D_GHOST_TETROMINO_COLOR, parse_opt_color)?;
+        let ghost_tetromino_character = opt_general_parse::<char>(&mut settings,
+            "ghost_tetromino_character", D_GHOST_TETROMINO_CHARACTER, parse_char)?;
+        let ghost_tetromino_color = opt_general_parse::<Color>(&mut settings,
+            "ghost_tetromino_color", D_GHOST_TETROMINO_COLOR, parse_color)?;
         let cascade = general_parse::<bool>(&mut settings, "cascade", D_CASCADE, parse_bool)?;
         let const_level = parse_num_range::<Option<usize>>(&mut settings, "const_level", D_CONST_LEVEL, )?;
         let monochrome = general_parse(&mut settings, "monochrome", ,)?;
