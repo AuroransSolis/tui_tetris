@@ -3,6 +3,7 @@ use std::io::Read;
 use std::hint::unreachable_unchecked;
 use std::str::FromStr;
 use std::collections::HashMap;
+use std::ops::Range;
 use crossterm::{Color, InputEvent, KeyEvent};
 
 const CONFIG_OPTIONS: [&str; 35] = [
@@ -186,15 +187,6 @@ fn parse_keyevent(rhs: &str, line_num: usize, line: &str) -> Result<KeyEvent, Pa
     }
 }
 
-fn parse_bool(rhs: &str, line_num: usize, line: &str) -> Result<bool, ParseError> {
-    match rhs.to_ascii_lowercase().as_str() {
-        "1" | "t" | "true" => Ok(true),
-        "0" | "f" | "false" => Ok(false),
-        _ => Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line,
-            Some("Accepted boolean values: 1, t, true, 0, f, false")))
-    }
-}
-
 fn parse_color(rhs: &str, line_num: usize, line: &str) -> Result<Color, ParseError> {
     let mut parts = rhs.split_whitespace();
     let color_type = parts.next().ok_or_else(|| ParseError::new(ParseErrorKind::MissingValue,
@@ -243,7 +235,53 @@ fn parse_opt_char(rhs: &str, line_num: usize, line: &str) -> Result<Option<char>
     if rhs.len() == 0 {
         Ok(None)
     } else {
-        parse_char(rhs, line_num, line)
+        Ok(Some(parse_char(rhs, line_num, line)?))
+    }
+}
+
+fn parse_opt_color(rhs: &str, line_num: usize, line: &str) -> Result<Option<Color>, ParseError> {
+    if rhs.len() == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(parse_color(rhs, line_num, line)?))
+    }
+}
+
+fn parse_bool(rhs: &str, line_num: usize, line: &str) -> Result<bool, ParseError> {
+    match rhs.to_ascii_lowercase().as_str() {
+        "1" | "t" | "true" => Ok(true),
+        "0" | "f" | "false" => Ok(false),
+        _ => Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line,
+            Some("Accepted boolean values: 1, t, true, 0, f, false")))
+    }
+}
+
+fn parse_usize(rhs: &str, line_num: usize, line: &str) -> Result<usize, ParseError> {
+    rhs.parse::<usize>().map_err(|| ParseError::new(ParseErrorKind::FailedParseValue, line_num,
+        line, None))
+}
+
+fn parse_opt_usize(rhs: &str, line_num: usize, line: &str) -> Result<Option<usize>, ParseError> {
+    if rhs.len() == 0 {
+        None
+    } else {
+        Ok(Some(parse_usize(rhs, line_num, line)))
+    }
+}
+
+fn parse_num_range<T: PartialOrd + FromStr>(map: &mut HashMap<&str, (&str, usize, &str)>, key: &str,
+    default: T, range: Range<T>, fp_message: &'static str, oor_message: &'static str)
+    -> Result<T, ParseError> {
+    if let Some((rhs, line_num, line)) = map.remove(key) {
+        let parsed = rhs.parse::<T>().map_err(|| ParseError::new(ParseErrorKind::FailedParseValue,
+            line_num, line, Some(fp_message)))?;
+        if range.contains(&parsed) {
+            Ok(parsed)
+        } else {
+            Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line, Some(oor_message)))
+        }
+    } else {
+        Ok(default)
     }
 }
 
@@ -385,9 +423,10 @@ impl GameConfig {
         let hold = general_parse::<KeyEvent>(&mut settings, "hold", D_HOLD, parse_keyevent)?;
         let ghost_tetromino_character = general_parse::<Option<char>>(&mut settings,
             "ghost_tetromino_character", D_GHOST_TETROMINO_CHARACTER, parse_opt_char)?;
-        let ghost_tetromino_color = general_parse(&mut settings, "ghost_tetromino_color", ,)?;
-        let cascade = general_parse(&mut settings, "cascade", ,)?;
-        let const_level = general_parse(&mut settings, "const_level", ,)?;
+        let ghost_tetromino_color = general_parse::<Option<Color>>(&mut settings,
+            "ghost_tetromino_color", D_GHOST_TETROMINO_COLOR, parse_opt_color)?;
+        let cascade = general_parse::<bool>(&mut settings, "cascade", D_CASCADE, parse_bool)?;
+        let const_level = parse_num_range::<Option<usize>>(&mut settings, "const_level", D_CONST_LEVEL, )?;
         let monochrome = general_parse(&mut settings, "monochrome", ,)?;
         let border_color = general_parse(&mut settings, "border_color", ,)?;
         let top_border_character = general_parse::<char>(&mut settings, "top_border_character", ,)?;
