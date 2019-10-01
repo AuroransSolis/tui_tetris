@@ -55,8 +55,8 @@ const D_RIGHT: KeyEvent = KeyEvent::Right;
 const D_ROT_CW: KeyEvent = KeyEvent::ShiftLeft;
 const D_ROT_ACW: KeyEvent = KeyEvent::Up;
 const D_SOFT_DROP: KeyEvent = KeyEvent::Down;
-const D_HARD_DROP: KeyEvent = KeyEvent::Char(' ');
-const D_HOLD: KeyEvent = KeyEvent::Char('c');
+const D_HARD_DROP: KeyEvent = Some(KeyEvent::Char(' '));
+const D_HOLD: KeyEvent = Some(KeyEvent::Char('c'));
 const D_GHOST_TETROMINO_CHARACTER: Option<char> = Some('⬜');
 const D_GHOST_TETROMINO_COLOR: Option<Color> = Some(Color::Rgb {r: 240, g: 240, b: 240});
 const D_CASCADE: bool = false;
@@ -126,7 +126,7 @@ impl ParseError {
 
 fn general_parse<T>(map: &mut Settings, key: &str, default: T,
     parser: fn(&str, usize, &str) -> Result<T, ParseError>) -> Result<T, ParseError> {
-    if let Some((unparsed_setting, line_num, line)) = map.remove(key) {
+    if let Some(&(unparsed_setting, line_num, line)) = map.get(key) {
         parser(unparsed_setting, line_num, line)
     } else {
         Ok(default)
@@ -135,7 +135,7 @@ fn general_parse<T>(map: &mut Settings, key: &str, default: T,
 
 fn opt_general_parse<T>(map: &mut Settings, key: &str, default: Option<T>,
     parser: fn(&str, usize, &str) -> Result<T, ParseError>) -> Result<Option<T>, ParseError> {
-    if let Some((rhs, line_num, line)) = map.remove(key) {
+    if let Some(&(rhs, line_num, line)) = map.get(key) {
         if rhs.to_ascii_lowercase().as_str() == "none" {
             Ok(None)
         } else {
@@ -149,7 +149,7 @@ fn opt_general_parse<T>(map: &mut Settings, key: &str, default: Option<T>,
 fn parse_num_range<T: PartialOrd + FromStr, R: RangeBounds>(map: &mut Settings, key: &str,
     default: T, range: R, fp_message: &'static str, oor_message: &'static str)
     -> Result<T, ParseError> {
-    if let Some((rhs, line_num, line)) = map.remove(key) {
+    if let Some(&(rhs, line_num, line)) = map.get(key) {
         let parsed = rhs.parse::<T>().map_err(|| ParseError::new(ParseErrorKind::FailedParseValue,
             line_num, line, Some(fp_message)))?;
         if range.contains(&parsed) {
@@ -165,7 +165,7 @@ fn parse_num_range<T: PartialOrd + FromStr, R: RangeBounds>(map: &mut Settings, 
 fn opt_parse_num_range<T: PartialOrd + FromStr, R: RangeBounds>(map: &mut Settings, key: &str,
     default: Option<T>, range: R, fp_message: &'static str, oor_message: &'static str)
     -> Result<Option<T>, ParseError> {
-    if let Some((rhs, line_num, line)) = map.remove(key) {
+    if let Some(&(rhs, line_num, line)) = map.get(key) {
         if rhs.to_ascii_lowercase().as_str == "none" {
             Ok(None)
         } else {
@@ -278,8 +278,8 @@ pub struct GameConfig {
     rot_cw: KeyEvent,
     rot_acw: KeyEvent,
     soft_drop: KeyEvent,
-    hard_drop: KeyEvent,
-    hold: KeyEvent,
+    hard_drop: Option<KeyEvent>,
+    hold: Option<KeyEvent>,
     // Optional gameplay settings
     ghost_tetromino_character: Option<char>,
     ghost_tetromino_color: Option<Color>,
@@ -403,18 +403,19 @@ impl GameConfig {
             parse_keyevent)?;
         let soft_drop = general_parse::<KeyEvent>(&mut settings, "soft_drop", D_SOFT_DROP,
             parse_keyevent)?;
-        let hard_drop = general_parse::<KeyEvent>(&mut settings, "hard_drop", D_HARD_DROP,
+        let mut hard_drop = general_parse::<KeyEvent>(&mut settings, "hard_drop", D_HARD_DROP,
             parse_keyevent)?;
-        let hold = general_parse::<KeyEvent>(&mut settings, "hold", D_HOLD, parse_keyevent)?;
-        let ghost_tetromino_character = opt_general_parse::<char>(&mut settings,
+        let mut hold = opt_general_parse::<KeyEvent>(&mut settings, "hold", D_HOLD, parse_keyevent)?;
+        let mut ghost_tetromino_character = opt_general_parse::<char>(&mut settings,
             "ghost_tetromino_character", D_GHOST_TETROMINO_CHARACTER, parse_char)?;
-        let ghost_tetromino_color = opt_general_parse::<Color>(&mut settings,
+        let mut ghost_tetromino_color = opt_general_parse::<Color>(&mut settings,
             "ghost_tetromino_color", D_GHOST_TETROMINO_COLOR, parse_color)?;
         let cascade = general_parse::<bool>(&mut settings, "cascade", D_CASCADE, parse_bool)?;
         let const_level = opt_parse_num_range::<usize, RangeFrom<usize>>(&mut settings,
             "const_level", D_CONST_LEVEL, (1..), "Failed to parse constant level value.",
             "Level value was not greater than or equal to 1.")?;
-        let monochrome = opt_general_parse::<Color>(&mut settings, "monochrome", D_MONOCHROME, parse_color)?;
+        let mut monochrome = opt_general_parse::<Color>(&mut settings, "monochrome", D_MONOCHROME,
+            parse_color)?;
         let border_color = general_parse::<Color>(&mut settings, "border_color", D_BORDER_COLOR,
             parse_color)?;
         let top_border_character = general_parse::<char>(&mut settings, "top_border_character",
@@ -440,13 +441,41 @@ impl GameConfig {
         let block_size = parse_num_range::<usize, RangeFrom<usize>>(&mut settings, "block_size",
             D_BLOCK_SIZE, (1..), "Failed to parse block size value.",
             "Block size must be greater than or equal to 1.")?;
-        let i_color = general_parse(&mut settings, "i_color", D_I_COLOR, parse_color)?;
-        let j_color = general_parse(&mut settings, "j_color", D_J_COLOR, parse_color)?;
-        let l_color = general_parse(&mut settings, "l_color", D_L_COLOR, parse_color)?;
-        let s_color = general_parse(&mut settings, "s_color", D_S_COLOR, parse_color)?;
-        let z_color = general_parse(&mut settings, "z_color", D_Z_COLOR, parse_color)?;
-        let t_color = general_parse(&mut settings, "t_color", D_T_COLOR, parse_color)?;
-        let o_color = general_parse(&mut settings, "o_color", D_O_COLOR, parse_color)?;
+        let mut i_color = general_parse(&mut settings, "i_color", D_I_COLOR, parse_color)?;
+        let mut j_color = general_parse(&mut settings, "j_color", D_J_COLOR, parse_color)?;
+        let mut l_color = general_parse(&mut settings, "l_color", D_L_COLOR, parse_color)?;
+        let mut s_color = general_parse(&mut settings, "s_color", D_S_COLOR, parse_color)?;
+        let mut z_color = general_parse(&mut settings, "z_color", D_Z_COLOR, parse_color)?;
+        let mut t_color = general_parse(&mut settings, "t_color", D_T_COLOR, parse_color)?;
+        let mut o_color = general_parse(&mut settings, "o_color", D_O_COLOR, parse_color)?;
+        if board_width <= block_size || board_height <= block_size {
+            let (line_num, line) = if let Some(&(_, line_num, line)) = settings.get("block_size") {
+                (line_num, line)
+            } else if let Some(&(_, line_num, line)) = settings.get("board_height") {
+                (line_num, line)
+            } else if let Some(&(_, line_num, line)) = settings.get("board_width") {
+                (line_num, line)
+            } else {
+                unreachable!()
+            };
+            return Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line,
+                Some("Board dimensions must be greater than or equal to block size.")));
+        } else if monochrome.is_some() {
+            i_color = monochrome.unwrap();
+            j_color = monochrome.unwrap();
+            l_color = monochrome.unwrap();
+            s_color = monochrome.unwrap();
+            z_color = monochrome.unwrap();
+            t_color = monochrome.unwrap();
+            o_color = monochrome.unwrap();
+        } else {
+            if mode == Mode::Classic {
+                hard_drop = None;
+                hold = None;
+                ghost_tetromino_character = None;
+                ghost_tetromino_color = None;
+            }
+        }
         Ok(GameConfig {
             fps,
             board_width,
