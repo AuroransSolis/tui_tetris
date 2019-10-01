@@ -44,22 +44,6 @@ const CONFIG_OPTIONS: [&str; 35] = [
     "o_color"
 ];
 
-trait ValidConfigType {}
-
-macro_rules! impl_vct {
-    ($($t:ty),*) => ($(
-        impl ValidConfigType for $t {}
-    )*)
-}
-
-impl_vct!{
-    u64, usize, Mode, KeyEvent, Option<char>, Option<Color>, bool, Option<usize>, Color, char
-}
-
-trait ValidConfigParser
-
-const CONFIG_PARSERS: [fn<T: ValidConfigType>(&mut HashMap<&str, (&str, usize, &str)>, )]
-
 const D_FPS: u64 = 60;
 const D_BOARD_WIDTH: usize = 10;
 const D_BOARD_HEIGHT: usize = 20;
