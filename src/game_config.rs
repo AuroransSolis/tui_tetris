@@ -3,8 +3,10 @@ use std::io::Read;
 use std::hint::unreachable_unchecked;
 use std::str::FromStr;
 use std::collections::HashMap;
-use std::ops::Range;
+use std::ops::{Range, RangeFrom, RangeTo, RangeBounds};
 use crossterm::{Color, InputEvent, KeyEvent};
+
+type Settings = Settings;
 
 const CONFIG_OPTIONS: [&str; 35] = [
     "fps",
@@ -122,7 +124,7 @@ impl ParseError {
     }
 }
 
-fn general_parse<T>(map: &mut HashMap<&str, (&str, usize, &str)>, key: &str, default: T,
+fn general_parse<T>(map: &mut Settings, key: &str, default: T,
     parser: fn(&str, usize, &str) -> Result<T, ParseError>) -> Result<T, ParseError> {
     if let Some((unparsed_setting, line_num, line)) = map.remove(key) {
         parser(unparsed_setting, line_num, line)
@@ -131,29 +133,54 @@ fn general_parse<T>(map: &mut HashMap<&str, (&str, usize, &str)>, key: &str, def
     }
 }
 
-fn parse_u64(rhs: &str, line_num: usize, line: &str) -> Result<u64, ParseError> {
-    let parsed_value = rhs.parse::<u64>().map_err(|| {
-        ParseError::new(ParseErrorKind::FailedParseValue, line_num, line,
-            Some("FPS setting takes an integer value."));
-    })?;
-    if parsed_value == 0 {
-        Err(ParseError(ParseErrorKind::InvalidValue, line_num, line,
-            Some("FPS value must be greater than 0.")))
+fn opt_general_parse<T>(map: &mut Settings, key: &str, default: Option<T>,
+    parser: fn(&str, usize, &str) -> Result<T, ParseError>) -> Result<Option<T>, ParseError> {
+    if let Some((rhs, line_num, line)) = map.remove(key) {
+        if rhs.to_ascii_lowercase().as_str() == "none" {
+            Ok(None)
+        } else {
+            Ok(Some(parser(rhs, line_num, line)?))
+        }
     } else {
-        Ok(parsed_value)
+        default
     }
 }
 
-fn parse_board_dimension(rhs: &str, line_num: usize, line: &str) -> Result<usize, ParseError> {
-    let parsed_value = rhs.parse::<usize>().map_err(|| {
-        ParseError::new(ParseErrorKind::FailedParseValue, line_num, line,
-            Some("Board dimensions must be specified using integer values."))
-    })?;
-    if parsed_value == 0 {
-        Err(ParseError(ParseErrorKind::InvalidValue, line_num, line,
-            Some("Board dimensions must be greater than 0.")))
+fn parse_num_range<T: PartialOrd + FromStr, R: RangeBounds>(map: &mut Settings, key: &str,
+    default: T, range: R, fp_message: &'static str, oor_message: &'static str)
+    -> Result<T, ParseError> {
+    if let Some((rhs, line_num, line)) = map.remove(key) {
+        let parsed = rhs.parse::<T>().map_err(|| ParseError::new(ParseErrorKind::FailedParseValue,
+            line_num, line, Some(fp_message)))?;
+        if range.contains(&parsed) {
+            Ok(parsed)
+        } else {
+            Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line, Some(oor_message)))
+        }
     } else {
-        Ok(parsed_value)
+        Ok(default)
+    }
+}
+
+fn opt_parse_num_range<T: PartialOrd + FromStr, R: RangeBounds>(map: &mut Settings, key: &str,
+    default: Option<T>, range: R, fp_message: &'static str, oor_message: &'static str)
+    -> Result<Option<T>, ParseError> {
+    if let Some((rhs, line_num, line)) = map.remove(key) {
+        if rhs.to_ascii_lowercase().as_str == "none" {
+            Ok(None)
+        } else {
+            let parsed = rhs.parse::<T>()
+                .map_err(|| ParseError::new(ParseErrorKind::FailedParseValue, line_num, line,
+                    Some(fp_message)))?;
+            if range.contains(&parsed) {
+                Ok(Some(parsed))
+            } else {
+                Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line,
+                    Some(oor_message)))
+            }
+        }
+    } else {
+        Ok(default)
     }
 }
 
@@ -231,82 +258,12 @@ fn parse_char(rhs: &str, line_num: usize, line: &str) -> Result<char, ParseError
     }
 }
 
-fn parse_opt_char(rhs: &str, line_num: usize, line: &str) -> Result<Option<char>, ParseError> {
-    if rhs.len() == 0 {
-        Ok(None)
-    } else {
-        Ok(Some(parse_char(rhs, line_num, line)?))
-    }
-}
-
-fn parse_opt_color(rhs: &str, line_num: usize, line: &str) -> Result<Option<Color>, ParseError> {
-    if rhs.len() == 0 {
-        Ok(None)
-    } else {
-        Ok(Some(parse_color(rhs, line_num, line)?))
-    }
-}
-
 fn parse_bool(rhs: &str, line_num: usize, line: &str) -> Result<bool, ParseError> {
     match rhs.to_ascii_lowercase().as_str() {
         "1" | "t" | "true" => Ok(true),
         "0" | "f" | "false" => Ok(false),
         _ => Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line,
             Some("Accepted boolean values: 1, t, true, 0, f, false")))
-    }
-}
-
-fn parse_usize(rhs: &str, line_num: usize, line: &str) -> Result<usize, ParseError> {
-    rhs.parse::<usize>().map_err(|| ParseError::new(ParseErrorKind::FailedParseValue, line_num,
-        line, None))
-}
-
-fn parse_opt_usize(rhs: &str, line_num: usize, line: &str) -> Result<Option<usize>, ParseError> {
-    if rhs.len() == 0 {
-        None
-    } else {
-        Ok(Some(parse_usize(rhs, line_num, line)?))
-    }
-}
-
-fn opt_general_parse<T>(map: &mut HashMap<&str, (&str, usize, &str)>, key: &str, default: Option<T>,
-    parser: fn(&str, usize, &str) -> Result<T, ParseError>) -> Result<Option<T>, ParseError> {
-    if let Some((rhs, line_num, line)) = map.remove(key) {
-        Ok(Some(parser(rhs, line_num, line)?))
-    } else {
-        default
-    }
-}
-
-fn parse_num_range<T: PartialOrd + FromStr>(map: &mut HashMap<&str, (&str, usize, &str)>, key: &str,
-    default: T, range: Range<T>, fp_message: &'static str, oor_message: &'static str)
-    -> Result<T, ParseError> {
-    if let Some((rhs, line_num, line)) = map.remove(key) {
-        let parsed = rhs.parse::<T>().map_err(|| ParseError::new(ParseErrorKind::FailedParseValue,
-            line_num, line, Some(fp_message)))?;
-        if range.contains(&parsed) {
-            Ok(parsed)
-        } else {
-            Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line, Some(oor_message)))
-        }
-    } else {
-        Ok(default)
-    }
-}
-
-fn opt_parse_num_range<T: PartialOrd + FromStr>(map: &mut HashMap<&str, (&str, usize, &str)>,
-    key: &str, default: Option<T>, range: Range<T>, fp_message: &'static str,
-    oor_message: &'static str) -> Result<Option<T>, ParseError> {
-    if let Some((rhs, line_num, line)) = map.remove(key) {
-        let parsed = rhs.parse::<T>().map_err(|| ParseError::new(ParseErrorKind::FailedParseValue,
-            line_num, line, Some(fp_message)))?;
-        if range.contains(&parsed) {
-            Ok(Some(parsed))
-        } else {
-            Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line, Some(oor_message)))
-        }
-    } else {
-        Ok(default)
     }
 }
 
@@ -394,7 +351,7 @@ impl GameConfig {
         }
     }
 
-    fn parse(s: &str) /*-> Result<Self, ParseError>*/ {
+    fn parse(s: &str) -> Result<Self, ParseError> {
         let mut settings = HashMap::with_capacity(31);
         for (num, line) in s.lines().enumerate() {
             if line.len() == 0 {
@@ -430,11 +387,14 @@ impl GameConfig {
                 });
             }
         }
-        let fps = general_parse::<u64>(&mut settings, "fps", D_FPS, parse_u64)?;
-        let board_width = general_parse::<usize>(&mut settings, "board_width", D_BOARD_WIDTH,
-            parse_board_dimension)?;
-        let board_height = general_parse::<usize>(&mut settings, "board_height", D_BOARD_HEIGHT,
-            parse_board_dimension)?;
+        let fps = parse_num_range::<u64, RangeFrom<u64>>(&mut settings, "fps", D_FPS, (1..),
+            "Failed to parse FPS value.", "FPS value is not greater than or equal to 1.")?;
+        let board_width = parse_num_range::<usize, RangeFrom<usize>>(&mut settings, "board_width",
+            D_BOARD_WIDTH, (1..), "Failed to parse board width value.",
+            "Board width value is not greater than or equal to 1.")?;
+        let board_height = parse_num_range::<usize, RangeFrom<usize>>(&mut settings, "board_height",
+            D_BOARD_HEIGHT, (1..), "Failed to parse board height value.",
+            "Board height value is not greater than or equal to 1.")?;
         let mode = general_parse::<Mode>(&mut settings, "mode", D_MODE, parse_mode)?;
         let left = general_parse::<KeyEvent>(&mut settings, "left", D_LEFT, parse_keyevent)?;
         let right = general_parse::<KeyEvent>(&mut settings, "right", D_RIGHT, parse_keyevent)?;
@@ -451,266 +411,78 @@ impl GameConfig {
         let ghost_tetromino_color = opt_general_parse::<Color>(&mut settings,
             "ghost_tetromino_color", D_GHOST_TETROMINO_COLOR, parse_color)?;
         let cascade = general_parse::<bool>(&mut settings, "cascade", D_CASCADE, parse_bool)?;
-        let const_level = parse_num_range::<Option<usize>>(&mut settings, "const_level", D_CONST_LEVEL, )?;
-        let monochrome = general_parse(&mut settings, "monochrome", ,)?;
-        let border_color = general_parse(&mut settings, "border_color", ,)?;
-        let top_border_character = general_parse::<char>(&mut settings, "top_border_character", ,)?;
-        let tl_corner_character = general_parse::<char>(&mut settings, "tl_corner_character", ,)?;
-        let left_border_character = general_parse::<char>(&mut settings, "left_border_character", ,)?;
-        let bl_corner_character = general_parse::<char>(&mut settings, "bl_corner_character", ,)?;
-        let bottom_border_character = general_parse::<char>(&mut settings, "bottom_border_character", ,)?;
-        let br_corner_character = general_parse::<char>(&mut settings, "br_corner_character", ,)?;
-        let right_border_character = general_parse::<char>(&mut settings, "right_border_character", ,)?;
-        let tr_corner_character = general_parse::<char>(&mut settings, "tr_corner_character", ,)?;
-        let background_color = general_parse(&mut settings, "background_color", ,)?;
-        let block_character = general_parse::<char>(&mut settings, "block_character", ,)?;
-        let block_size = general_parse(&mut settings, "block_size", ,)?;
-        let i_color = general_parse(&mut settings, "i_color", ,)?;
-        let j_color = general_parse(&mut settings, "j_color", ,)?;
-        let l_color = general_parse(&mut settings, "l_color", ,)?;
-        let s_color = general_parse(&mut settings, "s_color", ,)?;
-        let z_color = general_parse(&mut settings, "z_color", ,)?;
-        let t_color = general_parse(&mut settings, "t_color", ,)?;
-        let o_color = general_parse(&mut settings, "o_color", ,)?;
-    }
-}
-
-impl GameConfig {
-
-    // Redundant code here since I wasn't sure how I was going to load/apply settings when I first
-    // started writing it and I haven't gone back to delete it since making a decision.
-    pub fn load_config(screen: &mut AlternateScreen<Stdout>) -> Option<Self> {
-        let conf_file = File::open("../tui_tetris.conf");
-        let gc = if let Ok(mut file) = conf_file {
-            let mut file_string = String::new();
-            if file.read_to_string(&mut file_string).is_err() {
-                write!(screen, "Failed to read configuration file! Would you like to use the \
-                    default config? [Y/n] ").unwrap();
-                let mut response = String::new();
-                stdin().read_line(&mut response).unwrap();
-                while response != "" && response != "y" && response != "Y" && response != "n"
-                    && response != "N" {
-                    write!(screen, "Sorry, that's an invalid option. Would you like to use the \
-                        default config? [Y/n] ").unwrap();
-                }
-                match response.as_str() {
-                    "" | "y" | "Y" => Some(GameConfig::default()),
-                    "n" | "N" => None,
-                    _ => unreachable!()
-                }
-            } else {
-                let lines = file_string.lines().collect::<Vec<&str>>();
-                let mut set = [false; 21];
-                let mut game_config = GameConfig::default();
-                for (no, &line) in lines.iter().enumerate() {
-                    if line == "" {
-                        continue;
-                    }
-                    let lowercase_line = line.to_lowercase();
-                    let option = lowercase_line.split(|c| c == ' ' || c == '=').next();
-                    if option.is_none() {
-                        write!(screen, "Uh oh, seems like your config file is malformed! Here's \
-                            the problematic line: {}\n", line).unwrap();
-                        return None;
-                    }
-                    let option = option.unwrap();
-                    if let Some(i) = CONFIG_OPTIONS.iter().enumerate().filter(|&(j, _)| !set[j])
-                        .position(|(_, &o)| o == option) {
-                        match i {
-                            0 => {
-                                let fps = lowercase_line.chars().rev()
-                                    .take_while(|&c| c != ' ' && c != '=')
-                                    .collect::<String>();
-                                let fps = fps.chars().rev().collect::<String>();
-                                if let Ok(fps) = fps.parse::<u64>() {
-                                    game_config.fps = fps;
-                                    set[0] = true;
-                                } else {
-                                    write!(screen, "Whoops, looks like you specified an invalid \
-                                        FPS on line {}: {}\n", no, line).unwrap();
-                                    return None;
-                                }
-                            },
-                            1 => {
-                                let board_width = lowercase_line.chars().rev()
-                                    .take_while(|&c| c != ' ' && c != '=')
-                                    .collect::<String>();
-                                let board_width = board_width.chars().rev().collect::<String>();
-                                if let Ok(board_width) = board_width.parse::<usize>() {
-                                    game_config.board_width = board_width;
-                                    set[1] = true;
-                                } else {
-                                    write!(screen, "Whoops, looks like you specified an invalid \
-                                        board width on line {}: {}\n", no, line).unwrap();
-                                    return None;
-                                }
-                            },
-                            2 => {
-                                let board_height = lowercase_line.chars().rev()
-                                    .take_while(|&c| c != ' ' && c != '=')
-                                    .collect::<String>();
-                                let board_height = board_height.chars().rev().collect::<String>();
-                                if let Ok(board_height) = board_height.parse::<usize>() {
-                                    game_config.board_height = board_height;
-                                    set[1] = true;
-                                } else {
-                                    write!(screen, "Whoops, looks like you specified an invalid \
-                                        board height on line {}: {}\n", no, line).unwrap();
-                                    return None;
-                                }
-                            },
-                            3 => {
-
-                            },
-                            4 => {
-
-                            },
-                            5 => {
-
-                            },
-                            6 => {
-
-                            },
-                            7 => {
-
-                            },
-                            8 => {
-
-                            },
-                            9 => {
-
-                            },
-                            10 => {
-
-                            },
-                            11 => {
-
-                            },
-                            12 => {
-
-                            },
-                            13 => {
-
-                            },
-                            14 => {
-
-                            },
-                            15 => {
-
-                            },
-                            16 => {
-
-                            },
-                            17 => {
-
-                            },
-                            18 => {
-
-                            },
-                            19 => {
-
-                            },
-                            20 => {
-
-                            },
-                            21 => {
-                                if set[13] && game_config.mode == Mode::Classic {
-                                    write!(screen, "Classic mode is selected but hold KeyEvent is \
-                                        specified. Ignoring.\n").unwrap();
-                                }
-                                let hold_KeyEvent = lowercase_line.chars().rev()
-                                    .take_while(|&c| c != ' ' && c != '=')
-                                    .collect::<String>();
-                                let hold_KeyEvent = hold_KeyEvent.chars().rev().collect::<String>();
-                                if hold_KeyEvent.len() > 1 {
-                                    match hold_KeyEvent.to_lowercase().as_str() {
-                                        "up" => game_config.hold = KeyEvent::Up,
-                                        "down" => game_config.hold = KeyEvent::Down,
-                                        "left" => game_config.hold = KeyEvent::Left,
-                                        "right" => game_config.hold = KeyEvent::Right,
-                                        _ => {
-                                            write!(screen, "{} is not an acceptable hold KeyEvent. Line \
-                                                {}: {}\n", hold_KeyEvent, no, line).unwrap();
-                                            return None;
-                                        }
-                                    }
-                                } else {
-                                    game_config.hold = KeyEvent::Char(hold_KeyEvent.chars().next().unwrap());
-
-                                }
-                            },
-                            _ => unreachable!()
-                        };
-                    } else {
-                        write!(screen, "Unrecognized option in config file: {}\n", line).unwrap();
-                        return None;
-                    }
-                }
-                Some(game_config)
-            }
-        } else {
-            Some(GameConfig::default())
-        };
-        gc
-    }
-}
-
-fn load_u64(s: &str) -> Result<Setting, LoadSettingError> {
-    if setting_strs[last] == "" {
-        println!("Found empty setting for FPS. Defaulting to: 60");
-        Ok(Setting {
-            field: CONFIG_OPTIONS[0].to_string(),
-            value: SettingValue::u64(60)
+        let const_level = opt_parse_num_range::<usize, RangeFrom<usize>>(&mut settings,
+            "const_level", D_CONST_LEVEL, (1..), "Failed to parse constant level value.",
+            "Level value was not greater than or equal to 1.")?;
+        let monochrome = opt_general_parse::<Color>(&mut settings, "monochrome", D_MONOCHROME, parse_color)?;
+        let border_color = general_parse::<Color>(&mut settings, "border_color", D_BORDER_COLOR,
+            parse_color)?;
+        let top_border_character = general_parse::<char>(&mut settings, "top_border_character",
+            D_TOP_BORDER_CHARACTER, parse_char)?;
+        let tl_corner_character = general_parse::<char>(&mut settings, "tl_corner_character",
+            D_TL_CORNER_CHARACTER, parse_char)?;
+        let left_border_character = general_parse::<char>(&mut settings, "left_border_character",
+            D_LEFT_BORDER_CHARACTER, parse_char)?;
+        let bl_corner_character = general_parse::<char>(&mut settings, "bl_corner_character",
+            D_BL_CORNER_CHARACTER, parse_char)?;
+        let bottom_border_character = general_parse::<char>(&mut settings,
+            "bottom_border_character", D_BOTTOM_BORDER_CHARACTER, parse_char)?;
+        let br_corner_character = general_parse::<char>(&mut settings, "br_corner_character",
+            D_BR_CORNER_CHARACTER, parse_char)?;
+        let right_border_character = general_parse::<char>(&mut settings, "right_border_character",
+            D_RIGHT_BORDER_CHARACTER, parse_char)?;
+        let tr_corner_character = general_parse::<char>(&mut settings, "tr_corner_character",
+            D_TR_CORNER_CHARACTER, parse_char)?;
+        let background_color = general_parse::<Color>(&mut settings, "background_color",
+            D_BACKGROUND_COLOR, parse_color)?;
+        let block_character = general_parse::<char>(&mut settings, "block_character",
+            D_BLOCK_CHARACTER, parse_char)?;
+        let block_size = parse_num_range::<usize, RangeFrom<usize>>(&mut settings, "block_size",
+            D_BLOCK_SIZE, (1..), "Failed to parse block size value.",
+            "Block size must be greater than or equal to 1.")?;
+        let i_color = general_parse(&mut settings, "i_color", D_I_COLOR, parse_color)?;
+        let j_color = general_parse(&mut settings, "j_color", D_J_COLOR, parse_color)?;
+        let l_color = general_parse(&mut settings, "l_color", D_L_COLOR, parse_color)?;
+        let s_color = general_parse(&mut settings, "s_color", D_S_COLOR, parse_color)?;
+        let z_color = general_parse(&mut settings, "z_color", D_Z_COLOR, parse_color)?;
+        let t_color = general_parse(&mut settings, "t_color", D_T_COLOR, parse_color)?;
+        let o_color = general_parse(&mut settings, "o_color", D_O_COLOR, parse_color)?;
+        Ok(GameConfig {
+            fps,
+            board_width,
+            board_height,
+            mode,
+            left,
+            right,
+            rot_cw,
+            rot_acw,
+            soft_drop,
+            hard_drop,
+            hold,
+            ghost_tetromino_character,
+            ghost_tetromino_color,
+            cascade,
+            const_level,
+            monochrome,
+            border_color,
+            top_border_character,
+            tl_corner_character,
+            left_border_character,
+            bl_corner_character,
+            bottom_border_character,
+            br_corner_character,
+            right_border_character,
+            tr_corner_character,
+            background_color,
+            block_character,
+            block_size,
+            i_color,
+            j_color,
+            l_color,
+            s_color,
+            z_color,
+            t_color,
+            o_color
         })
-    } else if let Ok(num) = setting_strs[last].parse::<u64>() {
-        Ok(Setting {
-            field: CONFIG_OPTIONS[0].to_string(),
-            value: SettingValue::u64(num)
-        })
-    } else {
-        let err = format!("Found invalid value for fps: {}", setting_strs[last]);
-        Err(LoadSettingError::ValueError(err))
     }
 }
-
-fn try_str_to_refstatic_color(s: &str) -> Option<Color> {
-    if s == "black" {
-        Some(&color::Black)
-    } else if s == "blue" {
-        Some(&color::Blue)
-    } else if s == "cyan" {
-        Some(&color::Cyan)
-    } else if s == "green" {
-        Some(&color::Green)
-    } else if s == "lightblack" {
-        Some(&color::LightBlack)
-    } else if s == "lightblue" {
-        Some(&color::LightBlue)
-    } else if s == "lightcyan" {
-        Some(&color::LightCyan)
-    } else if s == "lightgreen" {
-        Some(&color::LightGreen)
-    } else if s == "lightmagenta" {
-        Some(&color::LightMagenta)
-    } else if s == "lightred" {
-        Some(&color::LightRed)
-    } else if s == "lightwhite" {
-        Some(&color::LightWhite)
-    } else if s == "lightyellow" {
-        Some(&color::LightYellow)
-    } else if s == "magenta" {
-        Some(&color::Magenta)
-    } else if s == "red" {
-        Some(&color::Red)
-    } else if s == "white" {
-        Some(&color::White)
-    } else if s == "yellow" {
-        Some(&color::Yellow)
-    } else {
-        None
-    }
-}
-
-const VALID_COLORS: [&str; 16] = ["black", "blue", "cyan", "green", "lightblack", "lightblue",
-    "lightcyan", "lightgreen", "lightmagenta", "lightred", "lightwhite", "lightyellow", "magenta",
-    "red", "white", "yellow"];
