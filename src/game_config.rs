@@ -96,6 +96,7 @@ pub enum Mode {
     Modern
 }
 
+#[derive(Debug)]
 pub enum ParseErrorKind {
     InvalidLineFormat,
     UnknownSetting,
@@ -105,6 +106,7 @@ pub enum ParseErrorKind {
     MissingValue
 }
 
+#[derive(Debug)]
 pub struct ParseError {
     kind: ParseErrorKind,
     line_no: usize,
@@ -124,6 +126,7 @@ impl ParseError {
     }
 }
 
+// If the setting map contains the setting, try to parse it. Otherwise, use the default value.
 fn general_parse<T>(map: &mut Settings, key: &str, default: T,
     parser: fn(&str, usize, &str) -> Result<T, ParseError>) -> Result<T, ParseError> {
     if let Some(&(unparsed_setting, line_num, line)) = map.get(key) {
@@ -133,6 +136,8 @@ fn general_parse<T>(map: &mut Settings, key: &str, default: T,
     }
 }
 
+// If the setting map contains the setting, try to parse it. Unless it is "none", in which case
+// return `None`. Otherwise, use the default value.
 fn opt_general_parse<T>(map: &mut Settings, key: &str, default: Option<T>,
     parser: fn(&str, usize, &str) -> Result<T, ParseError>) -> Result<Option<T>, ParseError> {
     if let Some(&(rhs, line_num, line)) = map.get(key) {
@@ -146,6 +151,8 @@ fn opt_general_parse<T>(map: &mut Settings, key: &str, default: Option<T>,
     }
 }
 
+// If the setting map contains the setting, try to parse it. If it is not within the specified
+// range, return an error saying so. Otherwise, use the default value.
 fn parse_num_range<T: PartialOrd + FromStr, R: RangeBounds>(map: &mut Settings, key: &str,
     default: T, range: R, fp_message: &'static str, oor_message: &'static str)
     -> Result<T, ParseError> {
@@ -162,6 +169,9 @@ fn parse_num_range<T: PartialOrd + FromStr, R: RangeBounds>(map: &mut Settings, 
     }
 }
 
+// If the setting map contains the setting, try to parse it. Unless it is "none", in which case
+// return `None`. If the parsed value is outside the specified range, return an error saying so.
+// Otherwise, use the default value.
 fn opt_parse_num_range<T: PartialOrd + FromStr, R: RangeBounds>(map: &mut Settings, key: &str,
     default: Option<T>, range: R, fp_message: &'static str, oor_message: &'static str)
     -> Result<Option<T>, ParseError> {
@@ -214,6 +224,9 @@ fn parse_keyevent(rhs: &str, line_num: usize, line: &str) -> Result<KeyEvent, Pa
     }
 }
 
+// Valid color settings are in one of the following forms:
+//     setting_name = rgb r,g,b
+//     setting_name = ansi ansi_color_value
 fn parse_color(rhs: &str, line_num: usize, line: &str) -> Result<Color, ParseError> {
     let mut parts = rhs.split_whitespace();
     let color_type = parts.next().ok_or_else(|| ParseError::new(ParseErrorKind::MissingValue,
@@ -351,32 +364,48 @@ impl GameConfig {
         }
     }
 
+    // Each line in the config file is put in a `HashMap<&str, (&str, usize, &str)>` where the key
+    // value is the setting name and the tuple type contains the RHS of the setting line, the line
+    // number, and the complete line (the last two are for error message purposes). If any line
+    // with a LHS that is not one of the valid setting names or a duplicate setting name is
+    // encountered, the config file is considered invalid. After that, we try to get the value for
+    // each "valid" key (each setting name) and parse it into the appropriate data type. Once that's
+    // done for each setting, we check a case where the config might be invalid, as well as two
+    // where some values might need to be adjusted. After that, we return the complete config.
     fn parse(s: &str) -> Result<Self, ParseError> {
-        let mut settings = HashMap::with_capacity(31);
+        let mut settings = HashMap::with_capacity(35);
         for (num, line) in s.lines().enumerate() {
+            // Skip blank lines
             if line.len() == 0 {
                 continue;
             }
+            // Skip comment lines
             if let Some('#') = line.chars().take(1).next() {
                 continue;
             }
+            // Split into LHS and RHS at '='
             let mut sections = line.split('=').trim();
+            // Each valid line has a LHS
             let lhs = sections.next()
                 .ok_or_else(||
                     ParseError::new(ParseErrorKind::InvalidLineFormat, num, line, None)
                 )?;
+            // LHS length must be > 0
             if lhs.len() == 0 {
                 return Err(ParseError::new(ParseErrorKind::InvalidLineFormat, num, line,
                     Some("There must be a setting name on the left side of the equals sign.")));
             }
+            // Each valid line has a RHS
             let rhs = sections.next()
                 .ok_or_else(||
                     ParseError::new(ParseErrorKind::InvalidLineFormat, num, line, None)
                 )?;
+            // RHS length must be > 0
             if rhs.len() == 0 {
                 return Err(ParseError::new(ParseErrorKind::InvalidLineFormat, num, line,
                     Some("There must be a value on the right side of the equals sign.")));
             }
+            // Check that the LHS is a valid setting name
             if CONFIG_OPTIONS.contains(lhs) {
                 if settings.insert(lhs, (rhs, num, line)).is_some() {
                     return Err(ParseError::new(ParseErrorKind::DuplicateSetting, num, line, None));
@@ -387,6 +416,7 @@ impl GameConfig {
                 });
             }
         }
+        // Get a value for each setting.
         let fps = parse_num_range::<u64, RangeFrom<u64>>(&mut settings, "fps", D_FPS, (1..),
             "Failed to parse FPS value.", "FPS value is not greater than or equal to 1.")?;
         let board_width = parse_num_range::<usize, RangeFrom<usize>>(&mut settings, "board_width",
@@ -448,7 +478,8 @@ impl GameConfig {
         let mut z_color = general_parse(&mut settings, "z_color", D_Z_COLOR, parse_color)?;
         let mut t_color = general_parse(&mut settings, "t_color", D_T_COLOR, parse_color)?;
         let mut o_color = general_parse(&mut settings, "o_color", D_O_COLOR, parse_color)?;
-        if board_width <= block_size || board_height <= block_size {
+        if board_width <= (block_size * 4) || board_height <= (block_size * 4) {
+            // The board must be at least as wide and tall as an I piece for any given block size.
             let (line_num, line) = if let Some(&(_, line_num, line)) = settings.get("block_size") {
                 (line_num, line)
             } else if let Some(&(_, line_num, line)) = settings.get("board_height") {
@@ -461,6 +492,7 @@ impl GameConfig {
             return Err(ParseError::new(ParseErrorKind::InvalidValue, line_num, line,
                 Some("Board dimensions must be greater than or equal to block size.")));
         } else if monochrome.is_some() {
+            // Monochrome setting overrides piece colors, but not border or background colors.
             i_color = monochrome.unwrap();
             j_color = monochrome.unwrap();
             l_color = monochrome.unwrap();
@@ -469,6 +501,7 @@ impl GameConfig {
             t_color = monochrome.unwrap();
             o_color = monochrome.unwrap();
         } else {
+            // Classic mode doesn't have the ghost tetromino, hard drops, or holds.
             if mode == Mode::Classic {
                 hard_drop = None;
                 hold = None;
