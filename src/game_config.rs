@@ -43,8 +43,16 @@ const CONFIG_OPTIONS: [&str; 35] = [
     "s_color",
     "z_color",
     "t_color",
-    "o_color",
+    "o_color"
 ];
+
+const VALID_SETTINGS: &'static str = "Valid settings:\n\
+fps, board_width, board_height, monochrome, cascade, const_level, ghost_tetromino_character,\n\
+ghost_tetromino_color, top_border_character, left_border_character, bottom_border_character,\n\
+right_border_character, tl_corner_character, bl_corner_character, br_corner_character,\n\
+tr_corner_character, border_color, block_character, block_size, mode, move_left, move_right,\n\
+rotate_clockwise, rotate_anticlockwise, soft_drop, hard_drop, hold, background_color, i_color,\n\
+j_color, l_color, s_color, z_color, t_color, o_color";
 
 const D_FPS: u64 = 60;
 const D_BOARD_WIDTH: usize = 10;
@@ -57,7 +65,7 @@ const D_ROT_ACW: KeyEvent = KeyEvent::Up;
 const D_SOFT_DROP: KeyEvent = KeyEvent::Down;
 const D_HARD_DROP: Option<KeyEvent> = Some(KeyEvent::Char(' '));
 const D_HOLD: Option<KeyEvent> = Some(KeyEvent::Char('c'));
-const D_GHOST_TETROMINO_CHARACTER: Option<char> = Some('⬜');
+const D_GHOST_TETROMINO_CHARACTER: Option<char> = Some('□');
 const D_GHOST_TETROMINO_COLOR: Option<Color> = Some(Color::Rgb {
     r: 240,
     g: 240,
@@ -80,7 +88,7 @@ const D_BR_CORNER_CHARACTER: char = '╝';
 const D_RIGHT_BORDER_CHARACTER: char = '║';
 const D_TR_CORNER_CHARACTER: char = '╗';
 const D_BACKGROUND_COLOR: Color = Color::Rgb { r: 0, g: 0, b: 0 };
-const D_BLOCK_CHARACTER: char = '⬛';
+const D_BLOCK_CHARACTER: char = '■';
 const D_BLOCK_SIZE: usize = 1;
 const D_I_COLOR: Color = Color::Rgb {
     r: 0,
@@ -105,15 +113,6 @@ const D_O_COLOR: Color = Color::Rgb {
     g: 240,
     b: 0
 };
-
-const VALID_SETTINGS: &'static str =
-    "\
-     Valid settings: fps, board_width, board_height, monochrome, cascade,\n\
-     const_level, ghost_tetromino, border_character, tl_corner_character,\n\
-     bl_corner_character, br_corner_character, tr_corner_character, border_color,\n\
-     block_character, block_size, mode, move_left, move_right, rotate_clockwise,\n\
-     rotate_anticlockwise, soft_drop, hard_drop, hold, background_color, i_color,\n\
-     j_color, l_color, s_color, z_color, t_color, o_color";
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Mode {
@@ -871,10 +870,10 @@ impl Display for GameConfig {
              board_width = {}\n\
              board_height = {}\n\
              mode = {}\n\
-             left = {}\n\
-             right = {}\n\
-             rot_cw = {}\n\
-             rot_acw = {}\n\
+             move_left = {}\n\
+             move_right = {}\n\
+             rotate_clockwise = {}\n\
+             rotate_anticlockwise = {}\n\
              soft_drop = {}\n\
              hard_drop = {}\n\
              hold = {}\n\
@@ -943,7 +942,10 @@ impl Display for GameConfig {
 
 fn keyevent_string(keyevent: &KeyEvent) -> String {
     match keyevent {
-        KeyEvent::Char(c) => format!("{}", c),
+        KeyEvent::Char(c) => match c {
+            ' ' => "space".to_string(),
+            _ => format!("{}", c)
+        },
         KeyEvent::Left => "left".to_string(),
         KeyEvent::Right => "right".to_string(),
         KeyEvent::Up => "up".to_string(),
@@ -952,6 +954,7 @@ fn keyevent_string(keyevent: &KeyEvent) -> String {
         KeyEvent::ShiftRight => "rshift".to_string(),
         KeyEvent::CtrlLeft => "lctrl".to_string(),
         KeyEvent::CtrlRight => "rctrl".to_string(),
+        KeyEvent::Esc => "esc".to_string(),
         _ => unreachable!()
     }
 }
