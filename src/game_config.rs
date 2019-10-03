@@ -55,8 +55,8 @@ const D_RIGHT: KeyEvent = KeyEvent::Right;
 const D_ROT_CW: KeyEvent = KeyEvent::ShiftLeft;
 const D_ROT_ACW: KeyEvent = KeyEvent::Up;
 const D_SOFT_DROP: KeyEvent = KeyEvent::Down;
-const D_HARD_DROP: KeyEvent = Some(KeyEvent::Char(' '));
-const D_HOLD: KeyEvent = Some(KeyEvent::Char('c'));
+const D_HARD_DROP: Option<KeyEvent> = Some(KeyEvent::Char(' '));
+const D_HOLD: Option<KeyEvent> = Some(KeyEvent::Char('c'));
 const D_GHOST_TETROMINO_CHARACTER: Option<char> = Some('⬜');
 const D_GHOST_TETROMINO_COLOR: Option<Color> = Some(Color::Rgb {
     r: 240,
@@ -619,7 +619,7 @@ impl GameConfig {
         let soft_drop =
             general_parse::<KeyEvent>(&settings, "soft_drop", D_SOFT_DROP, parse_keyevent)?;
         let mut hard_drop =
-            general_parse::<KeyEvent>(&settings, "hard_drop", D_HARD_DROP, parse_keyevent)?;
+            opt_general_parse::<KeyEvent>(&settings, "hard_drop", D_HARD_DROP, parse_keyevent)?;
         let mut hold = opt_general_parse::<KeyEvent>(&settings, "hold", D_HOLD, parse_keyevent)?;
         let mut ghost_tetromino_character = opt_general_parse::<char>(
             &settings,
