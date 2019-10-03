@@ -50,4 +50,5 @@ fn main() {
         }
         game_config
     };
+    println!("Successfully loaded config:\n{}", game_config);
 }
