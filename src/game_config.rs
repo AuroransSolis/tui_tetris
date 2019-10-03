@@ -1,12 +1,12 @@
 use super::*;
-use crossterm::{Color, InputEvent, KeyEvent};
+use crossterm::{Color, KeyEvent};
 use std::collections::HashMap;
-use std::hint::unreachable_unchecked;
-use std::io::Read;
-use std::ops::{Range, RangeBounds, RangeFrom, RangeTo};
+use std::fmt::{self, Display};
+use std::io::Result as IoResult;
+use std::ops::{RangeBounds, RangeFrom};
 use std::str::FromStr;
 
-type Settings = Settings;
+type Settings<'a> = HashMap<&'a str, (&'a str, usize, &'a str)>;
 
 const CONFIG_OPTIONS: [&str; 35] = [
     "fps",
@@ -121,6 +121,19 @@ pub enum Mode {
     Modern
 }
 
+impl Display for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Mode::Classic => "classic",
+                Mode::Modern => "modern"
+            }
+        )
+    }
+}
+
 #[derive(Debug)]
 pub enum ParseErrorKind {
     InvalidLineFormat,
@@ -129,6 +142,23 @@ pub enum ParseErrorKind {
     DuplicateSetting,
     FailedParseValue,
     MissingValue
+}
+
+impl Display for ParseErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                ParseErrorKind::InvalidLineFormat => "Invalid line format",
+                ParseErrorKind::UnknownSetting => "Unknown setting",
+                ParseErrorKind::InvalidValue => "Invalid value",
+                ParseErrorKind::DuplicateSetting => "Duplicate setting",
+                ParseErrorKind::FailedParseValue => "Failed to parse value",
+                ParseErrorKind::MissingValue => "Missing value"
+            }
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -151,6 +181,34 @@ impl ParseError {
             line_num,
             line: line.to_owned(),
             correction
+        }
+    }
+}
+
+impl Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Some(correction) = self.correction {
+            write!(
+                f,
+                "\
+                 Error on line {}: {}\n\
+                 {}\n\
+                 {}",
+                self.line_num + 1,
+                self.line,
+                self.kind,
+                correction
+            )
+        } else {
+            write!(
+                f,
+                "\
+                 Error on line {}: {}\n\
+                 {}",
+                self.line_num + 1,
+                self.line,
+                self.kind
+            )
         }
     }
 }
@@ -189,13 +247,13 @@ fn opt_general_parse<T>(
             Ok(Some(parser(rhs, line_num, line)?))
         }
     } else {
-        default
+        Ok(default)
     }
 }
 
 // If the setting map contains the setting, try to parse it. If it is not within the specified
 // range, return an error saying so. Otherwise, use the default value.
-fn parse_num_range<T: PartialOrd + FromStr, R: RangeBounds>(
+fn parse_num_range<T: PartialOrd + FromStr, R: RangeBounds<T>>(
     map: &Settings,
     key: &str,
     default: T,
@@ -204,7 +262,7 @@ fn parse_num_range<T: PartialOrd + FromStr, R: RangeBounds>(
     oor_message: &'static str
 ) -> Result<T, ParseError> {
     if let Some(&(rhs, line_num, line)) = map.get(key) {
-        let parsed = rhs.parse::<T>().map_err(|| {
+        let parsed = rhs.parse::<T>().map_err(|_| {
             ParseError::new(
                 ParseErrorKind::FailedParseValue,
                 line_num,
@@ -230,7 +288,7 @@ fn parse_num_range<T: PartialOrd + FromStr, R: RangeBounds>(
 // If the setting map contains the setting, try to parse it. Unless it is "none", in which case
 // return `None`. If the parsed value is outside the specified range, return an error saying so.
 // Otherwise, use the default value.
-fn opt_parse_num_range<T: PartialOrd + FromStr, R: RangeBounds>(
+fn opt_parse_num_range<T: PartialOrd + FromStr, R: RangeBounds<T>>(
     map: &Settings,
     key: &str,
     default: Option<T>,
@@ -239,10 +297,10 @@ fn opt_parse_num_range<T: PartialOrd + FromStr, R: RangeBounds>(
     oor_message: &'static str
 ) -> Result<Option<T>, ParseError> {
     if let Some(&(rhs, line_num, line)) = map.get(key) {
-        if rhs.to_ascii_lowercase().as_str == "none" {
+        if rhs.to_ascii_lowercase().as_str() == "none" {
             Ok(None)
         } else {
-            let parsed = rhs.parse::<T>().map_err(|| {
+            let parsed = rhs.parse::<T>().map_err(|_| {
                 ParseError::new(
                     ParseErrorKind::FailedParseValue,
                     line_num,
@@ -333,7 +391,7 @@ fn parse_color(rhs: &str, line_num: usize, line: &str) -> Result<Color, ParseErr
             Ok(Color::Rgb { r, g, b })
         }
         "ansi" => {
-            let c = color.parse::<u8>().map_err(|| {
+            let c = color.parse::<u8>().map_err(|_| {
                 ParseError::new(
                     ParseErrorKind::FailedParseValue,
                     line_num,
@@ -365,12 +423,14 @@ fn parse_rgb_triple(s: &str, line_num: usize, line: &str) -> Result<(u8, u8, u8)
             )
         })?
         .parse::<u8>()
-        .map_err(
-            || ParseErrorKind::FailedParseValue,
-            line_num,
-            line,
-            Some("Failed to parse R value.")
-        )?;
+        .map_err(|_| {
+            ParseError::new(
+                ParseErrorKind::FailedParseValue,
+                line_num,
+                line,
+                Some("Failed to parse R value.")
+            )
+        })?;
     let g = parts
         .next()
         .ok_or_else(|| {
@@ -382,12 +442,14 @@ fn parse_rgb_triple(s: &str, line_num: usize, line: &str) -> Result<(u8, u8, u8)
             )
         })?
         .parse::<u8>()
-        .map_err(
-            || ParseErrorKind::FailedParseValue,
-            line_num,
-            line,
-            Some("Failed to parse G value.")
-        )?;
+        .map_err(|_| {
+            ParseError::new(
+                ParseErrorKind::FailedParseValue,
+                line_num,
+                line,
+                Some("Failed to parse G value.")
+            )
+        })?;
     let b = parts
         .next()
         .ok_or_else(|| {
@@ -399,12 +461,14 @@ fn parse_rgb_triple(s: &str, line_num: usize, line: &str) -> Result<(u8, u8, u8)
             )
         })?
         .parse::<u8>()
-        .map_err(
-            || ParseErrorKind::FailedParseValue,
-            line_num,
-            line,
-            Some("Failed to parse B value.")
-        )?;
+        .map_err(|_| {
+            ParseError::new(
+                ParseErrorKind::FailedParseValue,
+                line_num,
+                line,
+                Some("Failed to parse B value.")
+            )
+        })?;
     Ok((r, g, b))
 }
 
@@ -526,7 +590,7 @@ impl GameConfig {
     // each "valid" key (each setting name) and parse it into the appropriate data type. Once that's
     // done for each setting, we check a case where the config might be invalid, as well as two
     // where some values might need to be adjusted. After that, we return the complete config.
-    fn parse(s: &str) -> Result<Self, ParseError> {
+    pub fn parse(s: &str) -> Result<Self, ParseError> {
         let mut settings = HashMap::with_capacity(35);
         for (num, line) in s.lines().enumerate() {
             // Skip blank lines
@@ -538,11 +602,12 @@ impl GameConfig {
                 continue;
             }
             // Split into LHS and RHS at '='
-            let mut sections = line.split('=').trim();
+            let mut sections = line.split('=');
             // Each valid line has a LHS
-            let lhs = sections.next().ok_or_else(|| {
-                ParseError::new(ParseErrorKind::InvalidLineFormat, num, line, None)
-            })?;
+            let lhs = sections
+                .next()
+                .ok_or_else(|| ParseError::new(ParseErrorKind::InvalidLineFormat, num, line, None))?
+                .trim();
             // LHS length must be > 0
             if lhs.len() == 0 {
                 return Err(ParseError::new(
@@ -553,9 +618,10 @@ impl GameConfig {
                 ));
             }
             // Each valid line has a RHS
-            let rhs = sections.next().ok_or_else(|| {
-                ParseError::new(ParseErrorKind::InvalidLineFormat, num, line, None)
-            })?;
+            let rhs = sections
+                .next()
+                .ok_or_else(|| ParseError::new(ParseErrorKind::InvalidLineFormat, num, line, None))?
+                .trim();
             // RHS length must be > 0
             if rhs.len() == 0 {
                 return Err(ParseError::new(
@@ -566,7 +632,7 @@ impl GameConfig {
                 ));
             }
             // Check that the LHS is a valid setting name
-            if CONFIG_OPTIONS.contains(lhs) {
+            if CONFIG_OPTIONS.contains(&lhs) {
                 if settings.insert(lhs, (rhs, num, line)).is_some() {
                     return Err(ParseError::new(
                         ParseErrorKind::DuplicateSetting,
@@ -591,7 +657,7 @@ impl GameConfig {
             &settings,
             "fps",
             D_FPS,
-            (1..),
+            1..,
             "Failed to parse FPS value.",
             "FPS value is not greater than or equal to 1."
         )?;
@@ -599,7 +665,7 @@ impl GameConfig {
             &settings,
             "board_width",
             D_BOARD_WIDTH,
-            (1..),
+            1..,
             "Failed to parse board width value.",
             "Board width value is not greater than or equal to 1."
         )?;
@@ -607,7 +673,7 @@ impl GameConfig {
             &settings,
             "board_height",
             D_BOARD_HEIGHT,
-            (1..),
+            1..,
             "Failed to parse board height value.",
             "Board height value is not greater than or equal to 1."
         )?;
@@ -638,11 +704,11 @@ impl GameConfig {
             &settings,
             "const_level",
             D_CONST_LEVEL,
-            (1..),
+            1..,
             "Failed to parse constant level value.",
             "Level value was not greater than or equal to 1."
         )?;
-        let mut monochrome =
+        let monochrome =
             opt_general_parse::<Color>(&settings, "monochrome", D_MONOCHROME, parse_color)?;
         let border_color =
             general_parse::<Color>(&settings, "border_color", D_BORDER_COLOR, parse_color)?;
@@ -706,7 +772,7 @@ impl GameConfig {
             &settings,
             "block_size",
             D_BLOCK_SIZE,
-            (1..),
+            1..,
             "Failed to parse block size value.",
             "Block size must be greater than or equal to 1."
         )?;
@@ -789,5 +855,147 @@ impl GameConfig {
             t_color,
             o_color
         })
+    }
+
+    pub fn write_to_file(&self, file: &mut File) -> IoResult<()> {
+        file.write_all(self.to_string().as_bytes())
+    }
+}
+
+impl Display for GameConfig {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "\
+             fps = {}\n\
+             board_width = {}\n\
+             board_height = {}\n\
+             mode = {}\n\
+             left = {}\n\
+             right = {}\n\
+             rot_cw = {}\n\
+             rot_acw = {}\n\
+             soft_drop = {}\n\
+             hard_drop = {}\n\
+             hold = {}\n\
+             ghost_tetromino_character = {}\n\
+             ghost_tetromino_color = {}\n\
+             cascade = {}\n\
+             const_level = {}\n\
+             monochrome = {}\n\
+             border_color = {}\n\
+             top_border_character = {}\n\
+             tl_corner_character = {}\n\
+             left_border_character = {}\n\
+             bl_corner_character = {}\n\
+             bottom_border_character = {}\n\
+             br_corner_character = {}\n\
+             right_border_character = {}\n\
+             tr_corner_character = {}\n\
+             background_color = {}\n\
+             block_character = {}\n\
+             block_size = {}\n\
+             i_color = {}\n\
+             j_color = {}\n\
+             l_color = {}\n\
+             s_color = {}\n\
+             z_color = {}\n\
+             t_color = {}\n\
+             o_color = {}\n",
+            self.fps,
+            self.board_width,
+            self.board_height,
+            self.mode,
+            keyevent_string(&self.left),
+            keyevent_string(&self.right),
+            keyevent_string(&self.rot_cw),
+            keyevent_string(&self.rot_acw),
+            keyevent_string(&self.soft_drop),
+            opt_keyevent_string(&self.hard_drop),
+            opt_keyevent_string(&self.hold),
+            opt_char_string(&self.ghost_tetromino_character),
+            opt_color_string(&self.ghost_tetromino_color),
+            bool_string(&self.cascade),
+            opt_usize_string(&self.const_level),
+            opt_color_string(&self.monochrome),
+            color_string(&self.border_color),
+            self.top_border_character,
+            self.tl_corner_character,
+            self.left_border_character,
+            self.bl_corner_character,
+            self.bottom_border_character,
+            self.br_corner_character,
+            self.right_border_character,
+            self.tr_corner_character,
+            color_string(&self.background_color),
+            self.block_character,
+            self.block_size,
+            color_string(&self.i_color),
+            color_string(&self.j_color),
+            color_string(&self.l_color),
+            color_string(&self.s_color),
+            color_string(&self.z_color),
+            color_string(&self.t_color),
+            color_string(&self.o_color)
+        )
+    }
+}
+
+fn keyevent_string(keyevent: &KeyEvent) -> String {
+    match keyevent {
+        KeyEvent::Char(c) => format!("{}", c),
+        KeyEvent::Left => "left".to_string(),
+        KeyEvent::Right => "right".to_string(),
+        KeyEvent::Up => "up".to_string(),
+        KeyEvent::Down => "down".to_string(),
+        KeyEvent::ShiftLeft => "lshift".to_string(),
+        KeyEvent::ShiftRight => "rshift".to_string(),
+        KeyEvent::CtrlLeft => "lctrl".to_string(),
+        KeyEvent::CtrlRight => "rctrl".to_string(),
+        _ => unreachable!()
+    }
+}
+
+fn opt_keyevent_string(opt_keyevent: &Option<KeyEvent>) -> String {
+    if let Some(ref keyevent) = opt_keyevent {
+        keyevent_string(keyevent)
+    } else {
+        "none".to_string()
+    }
+}
+
+fn opt_char_string(opt_char: &Option<char>) -> String {
+    if let Some(c) = opt_char {
+        format!("{}", c)
+    } else {
+        "none".to_string()
+    }
+}
+
+fn color_string(color: &Color) -> String {
+    match color {
+        Color::Rgb { r, g, b } => format!("rgb {},{},{}", r, g, b),
+        Color::AnsiValue(ansivalue) => format!("ansi {}", ansivalue),
+        _ => unreachable!()
+    }
+}
+
+fn opt_color_string(opt_color: &Option<Color>) -> String {
+    if let Some(ref color) = opt_color {
+        color_string(color)
+    } else {
+        "none".to_string()
+    }
+}
+
+fn bool_string(b: &bool) -> String {
+    if *b { "t" } else { "f" }.to_string()
+}
+
+fn opt_usize_string(opt_usize: &Option<usize>) -> String {
+    if let Some(num) = opt_usize {
+        format!("{}", num)
+    } else {
+        "none".to_string()
     }
 }
