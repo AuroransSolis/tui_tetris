@@ -1,12 +1,5 @@
-extern crate serde;
 extern crate crossterm;
-
-use termion::{
-    color::{self, *},
-    event::Key,
-    input::TermRead,
-    screen::AlternateScreen,
-};
+extern crate serde;
 
 mod game_config;
 mod gameboard;
@@ -16,35 +9,45 @@ use game_config::*;
 use gameboard::*;
 use tetromino::*;
 
-use std::fs::File;
-use std::io::{stdin, stdout, Read, Stdin, Stdout, Write};
+use std::fs::{read_to_string, File};
+use std::io::Write;
+use std::path::Path;
 
 fn main() {
-    let game_config = if let Ok(mut file) = File::open("tui_tetris.conf") {
-        let mut file_contents = String::new();
-        file.read_to_string(&mut file_contents);
-        match toml::from_str(&file_contents) {
-            Ok(game_config_precursor) => game_config_precursor,
+    let game_config = if Path::new("./tui_tetris.conf").exists() {
+        match read_to_string("./tui_tetris.conf") {
+            Ok(contents) => match GameConfig::parse(contents.as_str()) {
+                Ok(game_config) => game_config,
+                Err(e) => {
+                    println!("{}", e);
+                    return;
+                }
+            },
             Err(e) => {
-                println!(
-                    "Error loading game config from file! Location: {:?}\nDescription:\n{:?}",
-                    e.line_col(),
-                    e
-                );
+                println!("Critical error! Failed to read config file.\n{:?}", e);
                 return;
             }
         }
     } else {
-        print!(
-            "Could not find game config file! Would you like to use the default config? [y/N]: "
-        );
-    };
-    let mut screen = AlternateScreen::from(stdout());
-    writeln!(screen, "Testing!\n").unwrap();
-    write!(screen, "Testing!\nTesting!").unwrap();
-    for key in stdin().keys() {
-        if let Ok(_) = key {
-            break;
+        let game_config = GameConfig::default();
+        println!("Warning: using default game config.");
+        match File::create(Path::new("./tui_tetris.conf")) {
+            Ok(mut file) => match game_config.write_to_file(&mut file) {
+                Ok(()) => println!("Created new config file and wrote default config."),
+                Err(e) => {
+                    println!(
+                        "Critical error! Failed to write default config to new config file!\n\
+                         {:?}",
+                        e
+                    );
+                    return;
+                }
+            },
+            Err(e) => {
+                println!("Critical error! Failed to create new config file.\n{:?}", e);
+                return;
+            }
         }
-    }
+        game_config
+    };
 }
