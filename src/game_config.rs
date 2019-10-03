@@ -472,7 +472,14 @@ fn parse_rgb_triple(s: &str, line_num: usize, line: &str) -> Result<(u8, u8, u8)
 }
 
 fn parse_char(rhs: &str, line_num: usize, line: &str) -> Result<char, ParseError> {
-    if rhs.len() != 1 {
+    let mut char_iter = rhs.chars();
+    let first = char_iter.next().ok_or_else(|| ParseError::new(
+        ParseErrorKind::MissingValue,
+        line_num,
+        line,
+        Some("Missing character value.")
+    ))?;
+    if char_iter.next().is_some() {
         Err(ParseError::new(
             ParseErrorKind::InvalidValue,
             line_num,
@@ -480,7 +487,7 @@ fn parse_char(rhs: &str, line_num: usize, line: &str) -> Result<char, ParseError
             Some("Expected a single character value.")
         ))
     } else {
-        Ok(rhs.chars().next().unwrap())
+        Ok(first)
     }
 }
 
