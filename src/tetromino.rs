@@ -1,4 +1,5 @@
 use super::*;
+use crossterm::Color;
 
 enum Shape {
     I,
@@ -7,7 +8,7 @@ enum Shape {
     S,
     Z,
     T,
-    O
+    O,
 }
 
 struct Tetromino {
@@ -15,11 +16,9 @@ struct Tetromino {
     c1: (usize, usize),
     c2: (usize, usize),
     c3: (usize, usize),
-    color: &'static Color
+    color: Color,
 }
 
 impl Tetromino {
-    pub fn new(shape: Shape, board: &mut GameBoard) {
-
-    }
+    pub fn new(shape: Shape, board: &mut GameBoard) {}
 }
