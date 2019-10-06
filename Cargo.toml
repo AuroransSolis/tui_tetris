@@ -5,6 +5,4 @@ authors = ["Aurorans Solis <primalucegd@gmail.com>"]
 
 [dependencies]
 crossterm = "0.11.1"
-config = "0.9.3"
-toml = "0.5.0"
-serde = { version = "1.0.90", features = ["derive"] }
+rand = "0.7.2"

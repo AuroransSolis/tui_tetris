@@ -1,5 +1,5 @@
 extern crate crossterm;
-extern crate serde;
+extern crate rand;
 
 mod game_config;
 mod gameboard;
