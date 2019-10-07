@@ -1,8 +1,8 @@
-use super::*;
-use crossterm::{Color, KeyEvent};
+use crate::crossterm::{Color, KeyEvent};
 use std::collections::HashMap;
 use std::fmt::{self, Display};
-use std::io::Result as IoResult;
+use std::fs::File;
+use std::io::{Result as IoResult, Write};
 use std::ops::{RangeBounds, RangeFrom};
 use std::str::FromStr;
 
@@ -908,7 +908,7 @@ impl Display for GameConfig {
              z_color = {}\n\
              t_color = {}\n\
              o_color = {}\n",
-            self.fps_limiter,
+            opt_u64_string(&self.fps_limiter),
             self.board_width,
             self.board_height,
             self.mode,
@@ -944,6 +944,14 @@ impl Display for GameConfig {
             color_string(&self.t_color),
             color_string(&self.o_color)
         )
+    }
+}
+
+fn opt_u64_string(opt_u64: &Option<u64>) -> String {
+    if let Some(ref num) = opt_u64 {
+        format!("{}", num)
+    } else {
+        "none".to_string()
     }
 }
 

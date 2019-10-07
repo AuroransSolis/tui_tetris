@@ -1,8 +1,8 @@
 use crossterm::Color;
 use rand::{thread_rng, rngs::ThreadRng, Rng};
 
-use crate::{GameConfig, Mode};
-use crate::Tetromino;
+use crate::game_config::{GameConfig, Mode};
+use crate::tetromino::Tetromino;
 use std::hint::unreachable_unchecked;
 
 struct Cell {
@@ -86,7 +86,7 @@ impl Game {
 //     piece number = nth false in um, where n is sequence number / (n - 1)!
 //     sequence number -= piece number * (n - 1)!
 // This iterative process has been unrolled and the range testing hard-coded.
-fn decode_sequence_number(mut sequence_number: u16) -> [Tetromino; 7] {
+pub fn decode_sequence_number(mut sequence_number: u16) -> [Tetromino; 7] {
     let mut in_use = [false; 7];
     let (p0, subtract) = match sequence_number {
         _ if (0..720).contains(&sequence_number) => (0, 0),
