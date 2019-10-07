@@ -6,3 +6,20 @@ authors = ["Aurorans Solis <primalucegd@gmail.com>"]
 [dependencies]
 crossterm = "0.11.1"
 rand = "0.7.2"
+
+[dev-dependencies]
+criterion = "0.2.11"
+
+[[bench]]
+name = "bench"
+harness = false
+path = "src/bench.rs"
+
+[profile.bench]
+opt-level = 3
+debug = false
+lto = true
+debug-assertions = false
+codegen-units = 1
+incremental = false
+overflow-checks = false
