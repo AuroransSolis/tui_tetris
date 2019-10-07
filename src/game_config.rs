@@ -9,7 +9,7 @@ use std::str::FromStr;
 type Settings<'a> = HashMap<&'a str, (&'a str, usize, &'a str)>;
 
 const CONFIG_OPTIONS: [&str; 35] = [
-    "fps",
+    "fps_limiter",
     "board_width",
     "board_height",
     "monochrome",
@@ -47,14 +47,14 @@ const CONFIG_OPTIONS: [&str; 35] = [
 ];
 
 const VALID_SETTINGS: &'static str = "Valid settings:\n\
-fps, board_width, board_height, monochrome, cascade, const_level, ghost_tetromino_character,\n\
+fps_limiter, board_width, board_height, monochrome, cascade, const_level, ghost_tetromino_character,\n\
 ghost_tetromino_color, top_border_character, left_border_character, bottom_border_character,\n\
 right_border_character, tl_corner_character, bl_corner_character, br_corner_character,\n\
 tr_corner_character, border_color, block_character, block_size, mode, move_left, move_right,\n\
 rotate_clockwise, rotate_anticlockwise, soft_drop, hard_drop, hold, background_color, i_color,\n\
 j_color, l_color, s_color, z_color, t_color, o_color";
 
-const D_FPS: u64 = 60;
+const D_FPS_LIMITER: Option<u64> = Some(60);
 const D_BOARD_WIDTH: usize = 10;
 const D_BOARD_HEIGHT: usize = 20;
 const D_MODE: Mode = Mode::Modern;
@@ -506,7 +506,7 @@ fn parse_bool(rhs: &str, line_num: usize, line: &str) -> Result<bool, ParseError
 
 pub struct GameConfig {
     // Required game settings
-    pub(crate) fps: u64,
+    pub(crate) fps_limiter: Option<u64>,
     pub(crate) board_width: usize,
     pub(crate) board_height: usize,
     pub(crate) mode: Mode,
@@ -550,7 +550,7 @@ pub struct GameConfig {
 impl GameConfig {
     pub fn default() -> Self {
         GameConfig {
-            fps: D_FPS,
+            fps_limiter: D_FPS_LIMITER,
             board_width: D_BOARD_WIDTH,
             board_height: D_BOARD_HEIGHT,
             mode: D_MODE,
@@ -659,13 +659,13 @@ impl GameConfig {
             }
         }
         // Get a value for each setting.
-        let fps = parse_num_range::<u64, RangeFrom<u64>>(
+        let fps_limiter = opt_parse_num_range::<u64, RangeFrom<u64>>(
             &settings,
-            "fps",
-            D_FPS,
-            1..,
-            "Failed to parse FPS value.",
-            "FPS value is not greater than or equal to 1."
+            "fps_limiter",
+            D_FPS_LIMITER,
+            30..,
+            "Failed to parse FPS_LIMITER value.",
+            "FPS_LIMITER value is not greater than or equal to 30."
         )?;
         let board_width = parse_num_range::<usize, RangeFrom<usize>>(
             &settings,
@@ -825,7 +825,7 @@ impl GameConfig {
             }
         }
         Ok(GameConfig {
-            fps,
+            fps_limiter,
             board_width,
             board_height,
             mode,
@@ -873,7 +873,7 @@ impl Display for GameConfig {
         write!(
             f,
             "\
-             fps = {}\n\
+             fps_limiter = {}\n\
              board_width = {}\n\
              board_height = {}\n\
              mode = {}\n\
@@ -908,7 +908,7 @@ impl Display for GameConfig {
              z_color = {}\n\
              t_color = {}\n\
              o_color = {}\n",
-            self.fps,
+            self.fps_limiter,
             self.board_width,
             self.board_height,
             self.mode,
